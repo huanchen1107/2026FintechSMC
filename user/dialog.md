@@ -558,3 +558,51 @@ i want to allow the tradingview has all editing tools such as changing periord, 
 
 ---
 
+---
+
+---
+
+### 🤖 AI (2026-05-15T06:44:37Z)
+
+I have successfully upgraded your TradingView integration to a professional-grade **Advanced Dashboard**. This includes all the "best free" charting functions available in the Lightweight Charts ecosystem.
+
+### 🌟 Advanced Features Implemented:
+1.  **Professional Drawing Toolbox**: Enabled a full set of editing tools (trendlines, rays, rectangles, Fibonacci, etc.) on the left sidebar.
+2.  **Dynamic Theme Switching**: Added a real-time toggle between **Dark** and **Light** modes to suit your viewing preference.
+3.  **Responsive Vertical Scaling**: Added a **Chart Height Slider** (400px to 1000px) allowing you to expand the chart to "full-window" height or shrink it for a compact view.
+4.  **Institutional Watermark**: Enabled a sleek background watermark that dynamically displays the current ticker symbol (e.g., AAPL, TSLA).
+5.  **Grid & Layout Optimization**: Customized the grid lines and text colors to remain harmonious across theme changes.
+<truncated 754 bytes>
+
+---
+
+### 👤 User (2026-05-15T06:46:34Z)
+
+git tag this version as tv-basic-v2
+
+---
+
+---
+
+### 🤖 AI (2026-05-15T06:46:40Z)
+
+The current version of the project has been successfully tagged as `tv-basic-v2` and pushed to your GitHub repository. This marks the stable completion of the advanced TradingView charting integration. 🏷️🚀
+
+---
+
+### 👤 User (2026-05-15T06:47:14Z)
+
+write all git tag and description in README.md
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+

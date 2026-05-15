@@ -137,3 +137,13 @@ streamlit run app.py
    - **雙模型自由切換**：在介面上新增平行的 `V2: DQN + SMC + MTF + RRR (Advanced)` 訓練按鈕，保留舊版與新版的靈活切換。
    - **四欄位 RRR 戰情室**：將 W1, D1, H4, H1 四個時區的風險報酬數據獨立設計成 4 欄並排的詳細分析區塊，提升數據可讀性。
    - **互動式 SMC 圖表標註**：在圖表區塊新增下拉選單，允許使用者勾選特定時區，並將該時區的 RRR 策略（Entry, Stop Loss, Take Profit）以水平虛線與動態標籤直接畫在最新的 K 線圖上，實現所見即所得的視覺化圖表。
+
+---
+
+## 🏷️ 版本里程碑 (Git Milestones & Tags)
+
+| Tag | Date | Description |
+| :--- | :--- | :--- |
+| `tv-basic-v2` | 2026-05-15 | **Advanced TradingView Dashboard**. Added themes (dark/light), drawing toolbox, adjustable height, ticker watermarks, and high-performance chronological rendering. |
+| `ok_20260515v1` | 2026-05-15 | **Core Integration**. Refactored `ai_comment.py` to use OpenRouter API and integrated initial TradingView Lightweight Charts engine. |
+| `v1.0-stable` | 2026-05-13 | **Original SMC × DRL Release**. Basic Plotly-based SMC indicators and DQN training workflow. |
