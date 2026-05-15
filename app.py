@@ -10,6 +10,7 @@ from recommend_v2 import recommend_strategy_v2
 from utils.data_utils import FEATURE_COLUMNS, prepare_data_for_chart
 from utils.data_utils_v2 import FEATURE_COLUMNS as FEATURE_COLUMNS_V2
 from ai_comment import generate_ai_comment
+from utils.analysis_utils import group_trades_into_pairs, pairs_to_dataframe
 from lightweight_charts.widgets import StreamlitChart
 
 # 設定頁面配置 (必須是第一個 Streamlit 指令)
@@ -353,6 +354,98 @@ def render_tradingview_chart(df, rec, snap):
 
 
 
+
+def render_trade_analysis():
+    st.subheader("Strategy Debugging & Trade Analysis")
+    
+    ret = st.session_state.get("model_ret", {})
+    if not ret or "trades_df" not in ret:
+        st.info("💡 Please run a training session first to generate trade data.")
+        return
+
+    raw_df = st.session_state.get("raw_df")
+    trades_df = ret["trades_df"]
+    pairs = group_trades_into_pairs(trades_df)
+    pairs_df = pairs_to_dataframe(pairs)
+
+    if pairs_df.empty:
+        st.warning("No completed trade pairs found in this backtest.")
+        return
+
+    # ── Split Screen Layout ──
+    col_chart, col_table = st.columns([3, 1])
+
+    selected_pair = None
+    with col_table:
+        st.markdown("#### 📜 Trade Pairs")
+        event = st.dataframe(
+            pairs_df[["ID", "Buy Time", "Profit %", "PnL"]],
+            on_select="rerun",
+            selection_mode="single_row",
+            use_container_width=True,
+            hide_index=True,
+            key="trade_table"
+        )
+        
+        selection = event.get("selection", {}).get("rows", [])
+        if selection:
+            idx = selection[0]
+            selected_pair = pairs[idx]
+            st.success(f"Selected Trade #{selected_pair.pair_id}")
+            with st.expander("🔍 Trade Details", expanded=True):
+                st.write(f"**Buy:** {selected_pair.buy_price:,.2f} ({selected_pair.buy_reason})")
+                st.write(f"**Sell:** {selected_pair.sell_price:,.2f} ({selected_pair.sell_reason})")
+                st.write(f"**Net PnL:** {selected_pair.pnl_value:,.0f}")
+
+    with col_chart:
+        # Prepare Plotly chart for synchronization
+        fig = plotly_go.Figure()
+        
+        # Candles
+        fig.add_trace(plotly_go.Candlestick(
+            x=raw_df['date'], open=raw_df['open'], high=raw_df['high'], low=raw_df['low'], close=raw_df['close'],
+            name='Price', opacity=0.4 if selected_pair else 1.0
+        ))
+
+        # Add all markers dimmed, except selected
+        for p in pairs:
+            is_selected = (selected_pair and p.pair_id == selected_pair.pair_id)
+            opacity = 1.0 if is_selected else 0.2
+            
+            # Buy
+            fig.add_trace(plotly_go.Scatter(
+                x=[p.buy_time], y=[p.buy_price], mode='markers',
+                marker=dict(symbol='triangle-up', color='#00E676', size=15 if is_selected else 8, line=dict(width=2 if is_selected else 0)),
+                name=f"Buy #{p.pair_id}", showlegend=False, opacity=opacity
+            ))
+            # Sell
+            fig.add_trace(plotly_go.Scatter(
+                x=[p.sell_time], y=[p.sell_price], mode='markers',
+                marker=dict(symbol='triangle-down', color='#FF5252', size=15 if is_selected else 8, line=dict(width=2 if is_selected else 0)),
+                name=f"Sell #{p.pair_id}", showlegend=False, opacity=opacity
+            ))
+            # Connecting line
+            if is_selected:
+                fig.add_trace(plotly_go.Scatter(
+                    x=[p.buy_time, p.sell_time], y=[p.buy_price, p.sell_price],
+                    mode='lines', line=dict(color='white', width=2, dash='dot'),
+                    name='Trade Link', showlegend=False
+                ))
+
+        # Zoom Logic
+        if selected_pair:
+            # Zoom to a window around the trade
+            start_zoom = selected_pair.buy_time - pd.Timedelta(hours=24)
+            end_zoom = selected_pair.sell_time + pd.Timedelta(hours=24)
+            fig.update_xaxes(range=[start_zoom, end_zoom])
+            fig.update_layout(title=f"Detailed View: Trade #{selected_pair.pair_id} ({selected_pair.profit_pct*100:+.2f}%)")
+        else:
+            fig.update_layout(title="Global Trade Overview (Select a pair to zoom)")
+
+        fig.update_layout(height=600, margin=dict(l=0, r=0, t=40, b=0), template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+
+
 def _render_log_html(log_messages):
     """共用的 log HTML 渲染函式。"""
     display_text = "\n".join(log_messages)
@@ -473,7 +566,7 @@ def main():
     <div id="tab-nav-anchor"></div>
     """, unsafe_allow_html=True)
 
-    tab_col1, tab_col2, tab_col3, _ = st.columns([0.9, 1.1, 0.8, 3.2])
+    tab_col1, tab_col2, tab_col3, tab_col4, _ = st.columns([0.9, 1.1, 0.8, 1.1, 2.1])
     with tab_col1:
         if st.button("🤖 DQN Training Log", use_container_width=True, key="tab_training",
                      type="primary" if active_tab == "training" else "secondary"):
@@ -488,6 +581,11 @@ def main():
         if st.button("🧠 AI Comment", use_container_width=True, key="tab_ai",
                      type="primary" if active_tab == "ai_comment" else "secondary"):
             st.session_state["active_tab"] = "ai_comment"
+            st.rerun()
+    with tab_col4:
+        if st.button("📊 Trade Analysis", use_container_width=True, key="tab_analysis",
+                     type="primary" if active_tab == "analysis" else "secondary"):
+            st.session_state["active_tab"] = "analysis"
             st.rerun()
 
     st.markdown('<div style="border-top: 2px solid #E0E0E0; margin: -0.5rem 0 1rem 0;"></div>', unsafe_allow_html=True)
@@ -527,7 +625,11 @@ def main():
     raw_df = st.session_state["raw_df"]
     ticker = st.session_state.get("ticker", "UNKNOWN")
 
-    # ── DQN Training Log Tab ──
+    # ── Content ──
+
+    if active_tab == "analysis":
+        render_trade_analysis()
+
     if active_tab == "training":
         log_container = st.container(border=True)
         log_container.subheader("DQN Training Log")
