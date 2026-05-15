@@ -16,7 +16,7 @@ class TradePair:
     pnl_value: float
 
 def group_trades_into_pairs(trades_df: pd.DataFrame) -> List[TradePair]:
-    \"\"\"Groups a sequence of individual BUY/SELL actions into matched pairs.\"\"\"
+    """Groups a sequence of individual BUY/SELL actions into matched pairs."""
     if trades_df is None or trades_df.empty:
         return []
     
@@ -44,8 +44,8 @@ def group_trades_into_pairs(trades_df: pd.DataFrame) -> List[TradePair]:
                     buy_price=buy_p,
                     sell_price=sell_p,
                     profit_pct=profit_pct,
-                    buy_reason=\"DQN Confidence (BUY Signal)\", # Placeholder for now
-                    sell_reason=\"DQN Confidence (SELL Signal)\", # Placeholder for now
+                    buy_reason="DQN Confidence (BUY Signal)", # Placeholder for now
+                    sell_reason="DQN Confidence (SELL Signal)", # Placeholder for now
                     pnl_value=pnl
                 ))
                 pair_id += 1
@@ -60,13 +60,13 @@ def pairs_to_dataframe(pairs: List[TradePair]) -> pd.DataFrame:
     data = []
     for p in pairs:
         data.append({
-            \"ID\": p.pair_id,
-            \"Buy Time\": p.buy_time.strftime('%m-%d %H:%M'),
-            \"Profit %\": f\"{p.profit_pct*100:+.2f}%\",
-            \"PnL\": f\"{p.pnl_value:,.0f}\",
-            \"Summary\": f\"{p.buy_reason} -> {p.sell_reason}\",
-            \"_raw_buy_time\": p.buy_time,
-            \"_raw_sell_time\": p.sell_time,
-            \"_profit_raw\": p.profit_pct
+            "ID": p.pair_id,
+            "Buy Time": p.buy_time.strftime('%m-%d %H:%M'),
+            "Profit %": f"{p.profit_pct*100:+.2f}%",
+            "PnL": f"{p.pnl_value:,.0f}",
+            "Summary": f"{p.buy_reason} -> {p.sell_reason}",
+            "_raw_buy_time": p.buy_time,
+            "_raw_sell_time": p.sell_time,
+            "_profit_raw": p.profit_pct
         })
     return pd.DataFrame(data)

@@ -1088,3 +1088,65 @@ Optional connecting line between buy and sell points
 
 ---
 
+---
+
+---
+
+### 🤖 AI (2026-05-15T07:19:06Z)
+
+I have successfully built and integrated the **Advanced Trading-Analysis Interface** into your platform. This new feature provides a professional strategy-debugging environment with full chart-table synchronization.
+
+### 🚀 Key Features Implemented:
+1.  **Synchronized Split-Screen Layout**:
+    *   **Right Panel**: A scrollable trade-pair history table (built with the latest Streamlit `st.dataframe` selection feature). It groups raw signals into completed **BUY → SELL pairs** with ID, time, Profit %, and PnL.
+    *   **Left Panel**: An interactive Plotly candlestick chart that acts as your visual debugger.
+2.  **Smart Trade Grouping**:
+    *   Implemented a new logic in `utils/analysis_utils.py` that automatically matches entry and exit signals into cohesive trade units.
+3.  **One-Click Chart Synchronization**:
+    *   Selecting any trade row in the table **automatically zooms** the chart to that specific trade's time window.
+<truncated 834 bytes>
+
+---
+
+### 👤 User (2026-05-15T07:21:39Z)
+
+/mount/src/2026fintechsmc/app.py:13 in <module>                               
+
+                                                                                
+
+     10 from utils.data_utils import FEATURE_COLUMNS, prepare_data_for_chart    
+
+     11 from utils.data_utils_v2 import FEATURE_COLUMNS as FEATURE_COLUMNS_V2   
+
+     12 from ai_comment import generate_ai_comment                              
+
+  ❱  13 from utils.analysis_utils import group_trades_into_pairs, pairs_to_dat  
+
+     14 from lightweight_charts.widgets import StreamlitChart                   
+
+     15                                                                         
+
+     16 # 設定頁面配置 (必須是第一個 Streamlit 指令)                            
+
+────────────────────────────────────────────────────────────────────────────────
+
+<truncated 2086 bytes>
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
