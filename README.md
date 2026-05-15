@@ -144,6 +144,7 @@ streamlit run app.py
 
 | Tag | Date | Description |
 | :--- | :--- | :--- |
+| `tv-ok-v3-good` | 2026-05-15 | **Ultimate TradingView Dashboard (Stable)**. Fully resolved all deployment, dependency, and indicator rendering bugs. The gold standard version. |
 | `analysis-v1` | 2026-05-15 | **Advanced Trade Analysis Interface**. Synchronized split-screen dashboard with trade-pair grouping, zoom-to-trade interaction, and profit/loss analytics. |
 | `tv-ok-v2` | 2026-05-15 | **Ultimate TradingView Dashboard**. Final stable version with auto-update, EMAs, hotkeys help, light theme default, and fixed-width event reliability. |
 | `tv-basic-v2` | 2026-05-15 | **Advanced TradingView Dashboard**. Added themes, drawing toolbox, and watermarks. |

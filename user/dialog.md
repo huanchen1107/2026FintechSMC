@@ -1265,3 +1265,27 @@ NameError: No column named "EMA 20".
 
 ---
 
+---
+
+---
+
+### 🤖 AI (2026-05-15T07:27:28Z)
+
+I have fixed the `NameError: No column named "EMA 20"` by ensuring that the DataFrame column names passed to the TradingView chart exactly match the names assigned to the indicator lines.
+
+The `lightweight-charts-python` library requires the data columns to match the line names (e.g., a line named "EMA 20" expects a column named "EMA 20" in the provided DataFrame). I have updated `app.py` to correctly rename these columns during the rendering process.
+
+The fix has been pushed to your GitHub repository. Your advanced dashboard is now fully functional and stable! 📈✅🏁
+
+---
+
+### 👤 User (2026-05-15T07:29:13Z)
+
+git tag tv-ok-v3-good
+
+---
+
+---
+
+---
+
