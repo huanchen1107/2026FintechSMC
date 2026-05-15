@@ -308,7 +308,7 @@ def render_tradingview_chart(df, rec, snap):
 
         # Set Data
         plot_df = chart_df[['time', 'open', 'high', 'low', 'close', 'volume']].copy()
-                chart.set(plot_df)
+        chart.set(plot_df)
         
         # Add EMA lines
         line20 = chart.create_line(name='EMA 20', color='rgba(41, 98, 255, 0.6)')
@@ -347,46 +347,9 @@ def render_tradingview_chart(df, rec, snap):
 
         chart.load()
     except Exception as e:
-        st.error(f"Advanced Chart Error: {e}")
-        import traceback
-        st.code(traceback.format_exc())
-
-    except Exception as e:
-        st.error(f"Advanced Chart Error: {e}")
-        import traceback
-        st.code(traceback.format_exc())
-
-    except Exception as e:
-        st.error(f"Advanced Chart Error: {e}")
-        import traceback
-        st.code(traceback.format_exc())
-
-    except Exception as e:
         st.error(f"TradingView Chart Error: {e}")
         import traceback
         st.code(traceback.format_exc())
-
-    except Exception as e:
-        st.error(f"TradingView Chart Error: {e}")
-        import traceback
-        st.code(traceback.format_exc())
-
-    except Exception as e:
-        st.error(f"TradingView Chart Error: {e}")
-        import traceback
-        st.code(traceback.format_exc())
-
-    except Exception as e:
-        st.error(f"TradingView Chart Error: {e}")
-        st.write("Debug Info:")
-        st.write("- Columns:", list(df.columns))
-        st.write("- Duplicate Columns:", df.columns[df.columns.duplicated()].tolist())
-        import traceback
-        st.code(traceback.format_exc())
-
-    except Exception as e:
-        st.error(f"TradingView Chart Error: {e}")
-        st.write("Debug - Columns in chart_df:", list(chart_df.columns))
 
 
 

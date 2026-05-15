@@ -951,3 +951,83 @@ git tag this as tv-ok-v2
 
 ---
 
+---
+
+---
+
+### 🤖 AI (2026-05-15T07:03:34Z)
+
+I have successfully tagged the current version as **`tv-ok-v2`** and pushed it to your GitHub repository.
+
+Additionally, I have updated the **"版本里程碑 (Git Milestones & Tags)"** section in your `README.md` to document this final stable release, which includes the ultimate TradingView dashboard with all requested features (auto-update, EMAs, hotkeys help, and optimized reliability).
+
+Your project history is now fully up-to-date! 🏷️🚀🏁
+
+---
+
+### 👤 User (2026-05-15T07:08:34Z)
+
+the deployment on streamlit.io is not ok, check https://smc2026.streamlit.app/ for me
+
+---
+
+---
+
+### 👤 User (2026-05-15T07:13:05Z)
+
+Uncaught (in promise) Error: Uncaught Error: No Listener: tabs:outgoing.message.ready
+
+---
+
+### 👤 User (2026-05-15T07:11:39Z)
+
+Checking for general page errors
+Investigating the error container content
+Investigating scripts and iframes for app context
+Checking for Streamlit state and specific errors
+Checking network resource entries for failures
+The current page is displaying a generic application error. Based on the investigation, here is the breakdown of the situation:
+
+Observed Behavior
+The page content has been replaced by an error message:
+
+Heading: "Oh no."
+Message: "Error running app. If this keeps happening, please contact support."
+Context: This is a Streamlit application hosted on streamlit.app.
+Technical Analysis
+Frontend State: The DOM shows that the main application container (#root) is populated with an _errorContainer_9fsch_1. This indicates that the Streamlit React frontend has successfully loaded, but it has entered an error state.
+Network/Backend:
+<truncated 3018 bytes>
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+

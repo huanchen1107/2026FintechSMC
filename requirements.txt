@@ -7,5 +7,7 @@ plotly
 streamlit
 ta
 smartmoneyconcepts
-requestspython-dotenv
+requests
+python-dotenv
 lightweight-charts
+scipy
