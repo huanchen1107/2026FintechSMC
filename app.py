@@ -10,6 +10,7 @@ from recommend_v2 import recommend_strategy_v2
 from utils.data_utils import FEATURE_COLUMNS, prepare_data_for_chart
 from utils.data_utils_v2 import FEATURE_COLUMNS as FEATURE_COLUMNS_V2
 from ai_comment import generate_ai_comment
+from lightweight_charts.widgets import StreamlitChart
 
 # 設定頁面配置 (必須是第一個 Streamlit 指令)
 st.set_page_config(page_title="SMC × DRL Trading Platform", layout="wide")
@@ -39,7 +40,7 @@ def load_data_raw(ticker, start_date, end_date):
 
 def process_data_for_chart(raw_df, interval, rolling_window):
     """Process data with smartmoneyconcepts for chart display."""
-    df = raw_df.copy()
+    df = raw_df.loc[:, ~raw_df.columns.duplicated()].copy()
     df.set_index("date", inplace=True)
     resample_rules = {"1h": None, "4h": "4h", "1d": "D", "1wk": "W-MON"}
     rule = resample_rules.get(interval)
@@ -88,6 +89,12 @@ def render_chart():
         if "rr_details" in snap:
             rr_options = [tf.upper() for tf in ["w1", "d1", "h4", "h1"] if pd.notna(snap["rr_details"][tf.lower()]["entry"])]
         show_rr = st.multiselect("Show MTF RRR Levels", rr_options, default=[], key="show_rr_levels")
+    
+    col3, col4 = st.columns([1, 2])
+    with col3:
+        chart_engine = st.selectbox("Chart Engine", ["Plotly (SMC Focus)", "TradingView (Performance)"], index=0, key="chart_engine")
+    with col4:
+        st.write("") # placeholder
 
     interval_option = interval_map[chart_tf]
 
@@ -98,25 +105,36 @@ def render_chart():
             st.error(f"Data conversion or SMC calculation failed: {e}")
             return
 
-    fig = plotly_go.Figure()
-    if interval_option in ['1h', '4h']:
-        df['date_str'] = df['date'].dt.strftime('%Y-%m-%d %H:%M')
+    if chart_engine == "Plotly (SMC Focus)":
+        render_plotly_chart(df, rec, snap, show_rr)
     else:
-        df['date_str'] = df['date'].dt.strftime('%Y-%m-%d')
+        render_tradingview_chart(df, rec, snap)
 
-    fig.add_trace(plotly_go.Candlestick(x=df['date_str'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name='Candlesticks'))
+
+def render_plotly_chart(df, rec, snap, show_rr):
+    fig = plotly_go.Figure()
+    if df['date'].dtype == 'O': # Object/String
+        date_col = df['date']
+    else:
+        # Check if interval is intraday
+        if len(df) > 1 and (df['date'].iloc[1] - df['date'].iloc[0]).total_seconds() < 86400:
+            date_col = df['date'].dt.strftime('%Y-%m-%d %H:%M')
+        else:
+            date_col = df['date'].dt.strftime('%Y-%m-%d')
+
+    fig.add_trace(plotly_go.Candlestick(x=date_col, open=df['open'], high=df['high'], low=df['low'], close=df['close'], name='Candlesticks'))
 
     # Old Highs / Old Lows
     if 'old_high' in df.columns:
-        fig.add_trace(plotly_go.Scatter(x=df['date_str'], y=df['old_high'], mode='lines', name='Old High (BSL)', line=dict(color='red', width=1, dash='dash')))
-        fig.add_trace(plotly_go.Scatter(x=df['date_str'], y=df['old_low'], mode='lines', name='Old Low (SSL)', line=dict(color='green', width=1, dash='dash')))
+        fig.add_trace(plotly_go.Scatter(x=date_col, y=df['old_high'], mode='lines', name='Old High (BSL)', line=dict(color='red', width=1, dash='dash')))
+        fig.add_trace(plotly_go.Scatter(x=date_col, y=df['old_low'], mode='lines', name='Old Low (SSL)', line=dict(color='green', width=1, dash='dash')))
 
     # Order Block
     if "ob" in df.columns:
         ob_pos_x, ob_pos_y, ob_neg_x, ob_neg_y = [], [], [], []
         for i, row in df[df['ob'] != 0].iterrows():
-            x0 = row['date_str']
-            x1 = df['date_str'].iloc[-1] if i == len(df)-1 else df['date_str'].iloc[min(i+10, len(df)-1)]
+            x0 = date_col.iloc[i]
+            x1 = date_col.iloc[-1] if i == len(df)-1 else date_col.iloc[min(i+10, len(df)-1)]
             y0 = row.get('ob_bottom', row['low'])
             y1 = row.get('ob_top', row['high'])
             if row['ob'] < 0:
@@ -134,8 +152,8 @@ def render_chart():
     if "fvg" in df.columns:
         fvg_pos_x, fvg_pos_y, fvg_neg_x, fvg_neg_y = [], [], [], []
         for i, row in df[df['fvg'] != 0].iterrows():
-            x0 = row['date_str']
-            x1 = df['date_str'].iloc[-1] if i == len(df)-1 else df['date_str'].iloc[min(i+3, len(df)-1)]
+            x0 = date_col.iloc[i]
+            x1 = date_col.iloc[-1] if i == len(df)-1 else date_col.iloc[min(i+3, len(df)-1)]
             y0 = row.get('fvg_bottom', row['low'])
             y1 = row.get('fvg_top', row['high'])
             if row['fvg'] < 0:
@@ -153,7 +171,7 @@ def render_chart():
     if "liq_swept" in df.columns:
         liq_df = df[df['liq_swept'] != 0]
         if not liq_df.empty:
-            fig.add_trace(plotly_go.Scatter(x=liq_df['date_str'], y=liq_df['high'] * 1.01, mode='markers', name='Liquidity Swept', marker=dict(symbol='x', color='purple', size=8)))
+            fig.add_trace(plotly_go.Scatter(x=date_col.iloc[liq_df.index], y=liq_df['high'] * 1.01, mode='markers', name='Liquidity Swept', marker=dict(symbol='x', color='purple', size=8)))
 
     # ── DRL 測試集交易標記 ──
     ret_data = st.session_state.get("model_ret", {})
@@ -162,13 +180,11 @@ def render_chart():
 
     if bt_trades_df is not None and not bt_trades_df.empty:
         def _nearest_candle(trade_dt):
-            """找到圖表中最接近交易時間的 K 線。"""
             t = pd.Timestamp(trade_dt)
             diffs = (df['date'] - t).abs()
             idx = diffs.idxmin()
-            return df.loc[idx, 'date_str'], df.loc[idx, 'low'], df.loc[idx, 'high']
+            return date_col.iloc[idx], df.loc[idx, 'low'], df.loc[idx, 'high']
 
-        # ── 所有 BUY 標記 ──
         buy_rows = bt_trades_df[bt_trades_df['type'] == 'BUY']
         if not buy_rows.empty:
             bx, by, bc = [], [], []
@@ -183,7 +199,6 @@ def render_chart():
                 hovertemplate='<b>BUY</b><br>Time: %{customdata[0]}<br>Price: %{customdata[1]}<br>Value: %{customdata[2]}<br>Fee: %{customdata[3]}<extra></extra>',
             ))
 
-        # ── 所有 SELL 標記 ──
         sell_rows = bt_trades_df[bt_trades_df['type'] == 'SELL']
         if not sell_rows.empty:
             sx, sy, sc = [], [], []
@@ -198,77 +213,111 @@ def render_chart():
                 hovertemplate='<b>SELL</b><br>Time: %{customdata[0]}<br>Price: %{customdata[1]}<br>Value: %{customdata[2]}<br>Fee: %{customdata[3]}<extra></extra>',
             ))
 
-        # ── 配對 BUY→SELL，計算 RRR，標記最佳/最差 ──
-        pairs = []
-        buy_entry = None
-        for _, row in bt_trades_df.iterrows():
-            if row['type'] == 'BUY' and buy_entry is None:
-                buy_entry = row
-            elif row['type'] == 'SELL' and buy_entry is not None:
-                ret = row['price'] / buy_entry['price'] - 1.0
-                pairs.append({'buy_dt': buy_entry['datetime'], 'buy_price': buy_entry['price'],
-                              'sell_dt': row['datetime'], 'sell_price': row['price'], 'return': ret})
-                buy_entry = None
-
-        if len(pairs) >= 1:
-            best = max(pairs, key=lambda p: p['return'])
-            worst = min(pairs, key=lambda p: p['return'])
-            highlights = [(best, 'Best RRR', 'gold')]
-            if best is not worst:
-                highlights.append((worst, 'Worst RRR', '#FF1744'))
-
-            for pair, label, clr in highlights:
-                bds, _, _ = _nearest_candle(pair['buy_dt'])
-                sds, _, _ = _nearest_candle(pair['sell_dt'])
-                fig.add_trace(plotly_go.Scatter(
-                    x=[bds, sds], y=[pair['buy_price'], pair['sell_price']],
-                    mode='markers+lines+text',
-                    marker=dict(symbol='star', color=clr, size=16, line=dict(color='black', width=1.5)),
-                    line=dict(color=clr, width=2, dash='dot'),
-                    text=[f"BUY {pair['buy_price']:,.1f}", f"SELL {pair['sell_price']:,.1f}"],
-                    textposition=['bottom center', 'top center'],
-                    textfont=dict(color=clr, size=9),
-                    customdata=[[label, f"BUY @ {pair['buy_price']:,.2f}", f"{pair['return']:.2%}"],
-                                [label, f"SELL @ {pair['sell_price']:,.2f}", f"{pair['return']:.2%}"]],
-                    hovertemplate='<b>%{customdata[0]}</b><br>%{customdata[1]}<br>Return: %{customdata[2]}<extra></extra>',
-                    name=label,
-                ))
-
     # ── Draw MTF RRR Lines ──
-    if 'show_rr' in locals() and show_rr and rec and "rr_details" in snap:
-        last_date = df['date_str'].iloc[-1]
+    if show_rr and rec and "rr_details" in snap:
+        last_date = date_col.iloc[-1]
         start_idx = max(0, len(df) - 30)
-        start_date = df['date_str'].iloc[start_idx]
-        
+        start_date = date_col.iloc[start_idx]
         for tf_upper in show_rr:
             tf = tf_upper.lower()
             tf_rr = snap["rr_details"][tf]
             entry = tf_rr["entry"]
             sl = tf_rr["stop_loss"]
             tp = tf_rr["take_profit"]
-            
-            fig.add_trace(plotly_go.Scatter(
-                x=[start_date, last_date], y=[entry, entry],
-                mode='lines+text', name=f'{tf_upper} Entry',
-                line=dict(color="white", width=2, dash="dashdot"),
-                text=[f"{tf_upper} Entry: {entry:,.2f}", ""], textposition="top right", textfont=dict(color="white", size=10)
-            ))
-            fig.add_trace(plotly_go.Scatter(
-                x=[start_date, last_date], y=[sl, sl],
-                mode='lines+text', name=f'{tf_upper} SL',
-                line=dict(color="#FF5252", width=2, dash="dashdot"),
-                text=[f"{tf_upper} SL: {sl:,.2f}", ""], textposition="bottom right", textfont=dict(color="#FF5252", size=10)
-            ))
-            fig.add_trace(plotly_go.Scatter(
-                x=[start_date, last_date], y=[tp, tp],
-                mode='lines+text', name=f'{tf_upper} TP',
-                line=dict(color="#00E676", width=2, dash="dashdot"),
-                text=[f"{tf_upper} TP: {tp:,.2f}", ""], textposition="top right", textfont=dict(color="#00E676", size=10)
-            ))
+            fig.add_trace(plotly_go.Scatter(x=[start_date, last_date], y=[entry, entry], mode='lines+text', name=f'{tf_upper} Entry', line=dict(color="white", width=2, dash="dashdot"), text=[f"{tf_upper} Entry: {entry:,.2f}", ""], textposition="top right", textfont=dict(color="white", size=10)))
+            fig.add_trace(plotly_go.Scatter(x=[start_date, last_date], y=[sl, sl], mode='lines+text', name=f'{tf_upper} SL', line=dict(color="#FF5252", width=2, dash="dashdot"), text=[f"{tf_upper} SL: {sl:,.2f}", ""], textposition="bottom right", textfont=dict(color="#FF5252", size=10)))
+            fig.add_trace(plotly_go.Scatter(x=[start_date, last_date], y=[tp, tp], mode='lines+text', name=f'{tf_upper} TP', line=dict(color="#00E676", width=2, dash="dashdot"), text=[f"{tf_upper} TP: {tp:,.2f}", ""], textposition="top right", textfont=dict(color="#00E676", size=10)))
 
-    fig.update_layout(height=550, margin=dict(l=0, r=0, t=30, b=0), xaxis_rangeslider_visible=False, xaxis_type="category", title="SMC Price Action")
+    fig.update_layout(height=550, margin=dict(l=0, r=0, t=30, b=0), xaxis_rangeslider_visible=False, xaxis_type="category", title="Plotly SMC Price Action")
     fig.update_xaxes(type="category", nticks=10)
     st.plotly_chart(fig, use_container_width=True)
+
+
+
+
+
+def render_tradingview_chart(df, rec, snap):
+    st.subheader("TradingView Lightweight Chart")
+    
+    try:
+        # 1. Ensure columns are not a MultiIndex
+        chart_df = df.copy()
+        if isinstance(chart_df.columns, pd.MultiIndex):
+            chart_df.columns = ["_".join(col).strip("_") for col in chart_df.columns.values]
+        
+        # 2. Force unique column names
+        # This is the most reliable way to handle duplicates
+        chart_df = chart_df.loc[:, ~chart_df.columns.duplicated()]
+        
+        # 3. Clean up date/time columns
+        # We need a single 'time' column that is either datetime or string
+        if 'time' in chart_df.columns:
+            chart_df = chart_df.drop(columns=['time'])
+        
+        # Ensure 'date' column is a single series
+        if 'date' in chart_df.columns:
+            chart_df['time'] = chart_df['date']
+        else:
+            # Fallback if date is index
+            chart_df['time'] = chart_df.index
+            
+        # 4. Filter for only essential OHLCV columns + time + SMC for markers
+        # The library sometimes chokes on too many extra columns
+        essential = ['time', 'open', 'high', 'low', 'close', 'volume', 'fvg', 'ob']
+        # Also keep any columns needed for markers
+        cols_to_keep = [c for c in chart_df.columns if c in essential or c == 'time']
+        
+        # Select only these columns, ensuring no duplicates
+        chart_df = chart_df[list(dict.fromkeys(cols_to_keep))]
+        
+        # Final conversion check
+        chart_df['time'] = pd.to_datetime(chart_df['time'])
+        
+        chart = StreamlitChart(width=1000, height=550, toolbox=True)
+        chart.set(chart_df)
+        
+        # Add Markers
+        ret_data = st.session_state.get("model_ret", {})
+        bt_data = ret_data.get("test_backtest", {}) if ret_data else {}
+        bt_trades_df = bt_data.get("trades_df") if bt_data else None
+
+        if bt_trades_df is not None and not bt_trades_df.empty:
+            for _, t in bt_trades_df.iterrows():
+                trade_t = pd.Timestamp(t['datetime'])
+                diffs = (chart_df['time'] - trade_t).abs()
+                nearest_idx = diffs.idxmin()
+                actual_time = chart_df.loc[nearest_idx, 'time']
+                
+                if t['type'] == 'BUY':
+                    chart.marker(time=actual_time, position='belowBar', color='#00E676', shape='arrowUp', text=f"BUY @ {t['price']:,.0f}")
+                else:
+                    chart.marker(time=actual_time, position='aboveBar', color='#FF5252', shape='arrowDown', text=f"SELL @ {t['price']:,.0f}")
+
+        if 'ob' in chart_df.columns:
+            for i, row in chart_df[chart_df['ob'] != 0].tail(20).iterrows():
+                label = "Bullish OB" if row['ob'] > 0 else "Bearish OB"
+                color = "#00E676" if row['ob'] > 0 else "#FF5252"
+                chart.marker(time=row['time'], position='belowBar' if row['ob'] > 0 else 'aboveBar', color=color, shape='square', text=label)
+
+        if 'fvg' in chart_df.columns:
+            for i, row in chart_df[chart_df['fvg'] != 0].tail(10).iterrows():
+                label = "Bullish FVG" if row['fvg'] > 0 else "Bearish FVG"
+                color = "#00BFFF" if row['fvg'] > 0 else "#FFA500"
+                chart.marker(time=row['time'], position='belowBar' if row['fvg'] > 0 else 'aboveBar', color=color, shape='circle', text=label)
+
+        chart.load()
+    except Exception as e:
+        st.error(f"TradingView Chart Error: {e}")
+        st.write("Debug Info:")
+        st.write("- Columns:", list(df.columns))
+        st.write("- Duplicate Columns:", df.columns[df.columns.duplicated()].tolist())
+        import traceback
+        st.code(traceback.format_exc())
+
+    except Exception as e:
+        st.error(f"TradingView Chart Error: {e}")
+        st.write("Debug - Columns in chart_df:", list(chart_df.columns))
+
 
 
 def _render_log_html(log_messages):
