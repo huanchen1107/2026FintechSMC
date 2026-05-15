@@ -525,3 +525,36 @@ fix until ok , auto mode
 
 ---
 
+---
+
+---
+
+### 🤖 AI (2026-05-15T06:40:30Z)
+
+I have completed the integration and debugging of the **TradingView Lightweight Charts** system. The platform is now fully optimized and "auto-mode" verified.
+
+### ✅ Final Fixes & Improvements:
+- **Perfect Scaling (V7)**: Standardized all time data into ISO string formats (`YYYY-MM-DD` for daily/weekly and `YYYY-MM-DD HH:MM:SS` for intraday). This fixed the "thin red slice" issue and ensures the candlestick curve is perfectly visible upon loading.
+- **Data Normalization**: Implemented timezone stripping and strict chronological sorting to prevent rendering gaps.
+- **Robust Column Handling**: Added a MultiIndex flattening layer and defensive column renaming to prevent Pandas "duplicate key" errors during data assembly.
+- **Verified Layout**: Confirmed via automated browser testing that candlesticks, Order Blocks (OB), Fair Value Gaps (FVG), and Trade Markers are all rendering correctly across all timeframes.
+
+### 📊 How to Use:
+<truncated 568 bytes>
+
+---
+
+### 👤 User (2026-05-15T06:42:30Z)
+
+i want to allow the tradingview has all editing tools such as changing periord, and charting tools, background switch to which and enable the window to full-window, and shink size switching, i want best free stuff charting functions
+
+---
+
+---
+
+---
+
+---
+
+---
+

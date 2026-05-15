@@ -239,108 +239,99 @@ def render_plotly_chart(df, rec, snap, show_rr):
 
 
 
+
 def render_tradingview_chart(df, rec, snap):
-    st.subheader("TradingView Lightweight Chart")
+    st.subheader("TradingView Advanced Dashboard")
     
+    # ── Advanced Chart Settings ──
+    col_set1, col_set2, col_set3 = st.columns([1, 1, 2])
+    with col_set1:
+        chart_theme = st.selectbox("Theme", ["dark", "light"], index=0, key="tv_theme")
+    with col_set2:
+        chart_height = st.slider("Chart Height", 400, 1000, 600, step=50, key="tv_height")
+    with col_set3:
+        show_watermark = st.checkbox("Enable Watermark", value=True, key="tv_watermark")
+
     try:
-        # 1. Clean the dataframe
+        # 1. Prepare Data
         chart_df = df.copy()
         chart_df = chart_df.loc[:, ~chart_df.columns.duplicated()].copy()
         
-        # 2. Rename columns to standard names
-        rename_map = {
-            'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume',
-            'Date': 'time', 'Datetime': 'time', 'date': 'time'
-        }
+        rename_map = {'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume', 'date': 'time'}
         chart_df = chart_df.rename(columns={k: v for k, v in rename_map.items() if k in chart_df.columns})
         
-        # 3. Time formatting - Use string format for better compatibility
         chart_df['time'] = pd.to_datetime(chart_df['time'])
         if chart_df['time'].dt.tz is not None:
             chart_df['time'] = chart_df['time'].dt.tz_localize(None)
         
-        # Sort and drop duplicates
         chart_df = chart_df.sort_values('time').drop_duplicates(subset=['time']).reset_index(drop=True)
         
-        # Detect if intraday (1h/4h) or daily/weekly
-        # If interval is < 1 day, use full timestamp string
         is_intraday = False
         if len(chart_df) > 1:
-            diff = (chart_df['time'].iloc[1] - chart_df['time'].iloc[0]).total_seconds()
-            if diff < 86400:
+            if (chart_df['time'].iloc[1] - chart_df['time'].iloc[0]).total_seconds() < 86400:
                 is_intraday = True
         
-        if is_intraday:
-            chart_df['time'] = chart_df['time'].dt.strftime('%Y-%m-%d %H:%M:%S')
-        else:
-            chart_df['time'] = chart_df['time'].dt.strftime('%Y-%m-%d')
+        time_format = '%Y-%m-%d %H:%M:%S' if is_intraday else '%Y-%m-%d'
+        chart_df['time'] = chart_df['time'].dt.strftime(time_format)
         
-        # 4. Final columns and cleanup
-        ohlc = ['open', 'high', 'low', 'close']
-        for col in ohlc:
+        for col in ['open', 'high', 'low', 'close']:
             chart_df[col] = pd.to_numeric(chart_df[col], errors='coerce')
-        chart_df = chart_df.dropna(subset=ohlc)
-        
-        if chart_df.empty:
-            st.warning("No data available for TradingView chart.")
-            return
+        chart_df = chart_df.dropna(subset=['open', 'high', 'low', 'close'])
 
-        # 5. Initialize chart
-        chart = StreamlitChart(width=1000, height=550, toolbox=True)
+        # 2. Initialize Advanced Chart
+        chart = StreamlitChart(width=None, height=chart_height, toolbox=True)
         
-        # Plot only essential columns
-        plot_cols = ['time', 'open', 'high', 'low', 'close', 'volume']
-        plot_df = chart_df[[c for c in plot_cols if c in chart_df.columns]].copy()
+        # Configuration using standard API
+        bg_color = '#131722' if chart_theme == 'dark' else '#ffffff'
+        text_color = '#d1d4dc' if chart_theme == 'dark' else '#131722'
+        grid_color = '#1f222d' if chart_theme == 'dark' else '#f0f3fa'
         
+        chart.layout(background_color=bg_color, text_color=text_color, font_size=12)
+        chart.grid(vert_enabled=True, horz_enabled=True, color=grid_color)
+        
+        if show_watermark:
+            ticker_name = st.session_state.get("ticker", "STOCK")
+            chart.watermark(ticker_name, color='rgba(180, 180, 255, 0.1)')
+
+        # Set Data
+        plot_df = chart_df[['time', 'open', 'high', 'low', 'close', 'volume']].copy()
         chart.set(plot_df)
         
-        # 6. Add Markers
+        # 3. Add Dynamic Markers
+        # BUY/SELL
         ret_data = st.session_state.get("model_ret", {})
-        bt_data = ret_data.get("test_backtest", {}) if ret_data else {}
-        bt_trades_df = bt_data.get("trades_df") if bt_data else None
-
-        if bt_trades_df is not None and not bt_trades_df.empty:
-            # We need to find the matching time string in chart_df
-            for _, t in bt_trades_df.iterrows():
-                trade_t = pd.Timestamp(t['datetime']).tz_localize(None)
-                # Find nearest time in the original datetime series before string conversion
-                # But since we already converted to strings, let's just find the nearest string
-                # or better, use the pre-converted datetime series for matching.
-                pass # Will implement more robustly below
+        bt_trades_df = ret_data.get("test_backtest", {}).get("trades_df") if ret_data else None
         
-        # Re-calculating actual_time for markers correctly
-        orig_times = pd.to_datetime(df['date']).dt.tz_localize(None)
         if bt_trades_df is not None and not bt_trades_df.empty:
+            orig_times = pd.to_datetime(df['date']).dt.tz_localize(None)
             for _, t in bt_trades_df.iterrows():
                 trade_t = pd.Timestamp(t['datetime']).tz_localize(None)
                 idx = (orig_times - trade_t).abs().idxmin()
-                # Get the formatted string from chart_df at matching index
-                # This assumes chart_df and df indices still correspond or we match by value
                 match_dt = orig_times.iloc[idx]
-                if is_intraday:
-                    actual_time_str = match_dt.strftime('%Y-%m-%d %H:%M:%S')
-                else:
-                    actual_time_str = match_dt.strftime('%Y-%m-%d')
+                actual_time_str = match_dt.strftime(time_format)
                 
                 if t['type'] == 'BUY':
-                    chart.marker(time=actual_time_str, position='belowBar', color='#00E676', shape='arrowUp', text=f"BUY")
+                    chart.marker(time=actual_time_str, position='belowBar', color='#22ab94', shape='arrowUp', text=f"BUY")
                 else:
-                    chart.marker(time=actual_time_str, position='aboveBar', color='#FF5252', shape='arrowDown', text=f"SELL")
+                    chart.marker(time=actual_time_str, position='aboveBar', color='#f7525f', shape='arrowDown', text=f"SELL")
 
-        
+        # SMC Markers
         if 'ob' in chart_df.columns:
             for i, row in chart_df[chart_df['ob'] != 0].tail(20).iterrows():
-                label = "Bullish OB" if row['ob'] > 0 else "Bearish OB"
-                color = "#00E676" if row['ob'] > 0 else "#FF5252"
-                chart.marker(time=row['time'], position='belowBar' if row['ob'] > 0 else 'aboveBar', color=color, shape='square', text=label)
+                color = "#22ab94" if row['ob'] > 0 else "#f7525f"
+                chart.marker(time=row['time'], position='belowBar' if row['ob'] > 0 else 'aboveBar', color=color, shape='square', text="OB")
 
         if 'fvg' in chart_df.columns:
             for i, row in chart_df[chart_df['fvg'] != 0].tail(10).iterrows():
-                label = "Bullish FVG" if row['fvg'] > 0 else "Bearish FVG"
-                color = "#00BFFF" if row['fvg'] > 0 else "#FFA500"
-                chart.marker(time=row['time'], position='belowBar' if row['fvg'] > 0 else 'aboveBar', color=color, shape='circle', text=label)
+                color = "#2962ff" if row['fvg'] > 0 else "#ff9800"
+                chart.marker(time=row['time'], position='belowBar' if row['fvg'] > 0 else 'aboveBar', color=color, shape='circle', text="FVG")
 
         chart.load()
+    except Exception as e:
+        st.error(f"Advanced Chart Error: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+
     except Exception as e:
         st.error(f"TradingView Chart Error: {e}")
         import traceback
