@@ -236,63 +236,98 @@ def render_plotly_chart(df, rec, snap, show_rr):
 
 
 
+
+
+
 def render_tradingview_chart(df, rec, snap):
     st.subheader("TradingView Lightweight Chart")
     
     try:
-        # 1. Ensure columns are not a MultiIndex
+        # 1. Clean the dataframe
         chart_df = df.copy()
-        if isinstance(chart_df.columns, pd.MultiIndex):
-            chart_df.columns = ["_".join(col).strip("_") for col in chart_df.columns.values]
+        chart_df = chart_df.loc[:, ~chart_df.columns.duplicated()].copy()
         
-        # 2. Force unique column names
-        # This is the most reliable way to handle duplicates
-        chart_df = chart_df.loc[:, ~chart_df.columns.duplicated()]
+        # 2. Rename columns to standard names
+        rename_map = {
+            'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume',
+            'Date': 'time', 'Datetime': 'time', 'date': 'time'
+        }
+        chart_df = chart_df.rename(columns={k: v for k, v in rename_map.items() if k in chart_df.columns})
         
-        # 3. Clean up date/time columns
-        # We need a single 'time' column that is either datetime or string
-        if 'time' in chart_df.columns:
-            chart_df = chart_df.drop(columns=['time'])
-        
-        # Ensure 'date' column is a single series
-        if 'date' in chart_df.columns:
-            chart_df['time'] = chart_df['date']
-        else:
-            # Fallback if date is index
-            chart_df['time'] = chart_df.index
-            
-        # 4. Filter for only essential OHLCV columns + time + SMC for markers
-        # The library sometimes chokes on too many extra columns
-        essential = ['time', 'open', 'high', 'low', 'close', 'volume', 'fvg', 'ob']
-        # Also keep any columns needed for markers
-        cols_to_keep = [c for c in chart_df.columns if c in essential or c == 'time']
-        
-        # Select only these columns, ensuring no duplicates
-        chart_df = chart_df[list(dict.fromkeys(cols_to_keep))]
-        
-        # Final conversion check
+        # 3. Time formatting - Use string format for better compatibility
         chart_df['time'] = pd.to_datetime(chart_df['time'])
+        if chart_df['time'].dt.tz is not None:
+            chart_df['time'] = chart_df['time'].dt.tz_localize(None)
         
+        # Sort and drop duplicates
+        chart_df = chart_df.sort_values('time').drop_duplicates(subset=['time']).reset_index(drop=True)
+        
+        # Detect if intraday (1h/4h) or daily/weekly
+        # If interval is < 1 day, use full timestamp string
+        is_intraday = False
+        if len(chart_df) > 1:
+            diff = (chart_df['time'].iloc[1] - chart_df['time'].iloc[0]).total_seconds()
+            if diff < 86400:
+                is_intraday = True
+        
+        if is_intraday:
+            chart_df['time'] = chart_df['time'].dt.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            chart_df['time'] = chart_df['time'].dt.strftime('%Y-%m-%d')
+        
+        # 4. Final columns and cleanup
+        ohlc = ['open', 'high', 'low', 'close']
+        for col in ohlc:
+            chart_df[col] = pd.to_numeric(chart_df[col], errors='coerce')
+        chart_df = chart_df.dropna(subset=ohlc)
+        
+        if chart_df.empty:
+            st.warning("No data available for TradingView chart.")
+            return
+
+        # 5. Initialize chart
         chart = StreamlitChart(width=1000, height=550, toolbox=True)
-        chart.set(chart_df)
         
-        # Add Markers
+        # Plot only essential columns
+        plot_cols = ['time', 'open', 'high', 'low', 'close', 'volume']
+        plot_df = chart_df[[c for c in plot_cols if c in chart_df.columns]].copy()
+        
+        chart.set(plot_df)
+        
+        # 6. Add Markers
         ret_data = st.session_state.get("model_ret", {})
         bt_data = ret_data.get("test_backtest", {}) if ret_data else {}
         bt_trades_df = bt_data.get("trades_df") if bt_data else None
 
         if bt_trades_df is not None and not bt_trades_df.empty:
+            # We need to find the matching time string in chart_df
             for _, t in bt_trades_df.iterrows():
-                trade_t = pd.Timestamp(t['datetime'])
-                diffs = (chart_df['time'] - trade_t).abs()
-                nearest_idx = diffs.idxmin()
-                actual_time = chart_df.loc[nearest_idx, 'time']
+                trade_t = pd.Timestamp(t['datetime']).tz_localize(None)
+                # Find nearest time in the original datetime series before string conversion
+                # But since we already converted to strings, let's just find the nearest string
+                # or better, use the pre-converted datetime series for matching.
+                pass # Will implement more robustly below
+        
+        # Re-calculating actual_time for markers correctly
+        orig_times = pd.to_datetime(df['date']).dt.tz_localize(None)
+        if bt_trades_df is not None and not bt_trades_df.empty:
+            for _, t in bt_trades_df.iterrows():
+                trade_t = pd.Timestamp(t['datetime']).tz_localize(None)
+                idx = (orig_times - trade_t).abs().idxmin()
+                # Get the formatted string from chart_df at matching index
+                # This assumes chart_df and df indices still correspond or we match by value
+                match_dt = orig_times.iloc[idx]
+                if is_intraday:
+                    actual_time_str = match_dt.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    actual_time_str = match_dt.strftime('%Y-%m-%d')
                 
                 if t['type'] == 'BUY':
-                    chart.marker(time=actual_time, position='belowBar', color='#00E676', shape='arrowUp', text=f"BUY @ {t['price']:,.0f}")
+                    chart.marker(time=actual_time_str, position='belowBar', color='#00E676', shape='arrowUp', text=f"BUY")
                 else:
-                    chart.marker(time=actual_time, position='aboveBar', color='#FF5252', shape='arrowDown', text=f"SELL @ {t['price']:,.0f}")
+                    chart.marker(time=actual_time_str, position='aboveBar', color='#FF5252', shape='arrowDown', text=f"SELL")
 
+        
         if 'ob' in chart_df.columns:
             for i, row in chart_df[chart_df['ob'] != 0].tail(20).iterrows():
                 label = "Bullish OB" if row['ob'] > 0 else "Bearish OB"
@@ -306,6 +341,21 @@ def render_tradingview_chart(df, rec, snap):
                 chart.marker(time=row['time'], position='belowBar' if row['fvg'] > 0 else 'aboveBar', color=color, shape='circle', text=label)
 
         chart.load()
+    except Exception as e:
+        st.error(f"TradingView Chart Error: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+
+    except Exception as e:
+        st.error(f"TradingView Chart Error: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+
+    except Exception as e:
+        st.error(f"TradingView Chart Error: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+
     except Exception as e:
         st.error(f"TradingView Chart Error: {e}")
         st.write("Debug Info:")
