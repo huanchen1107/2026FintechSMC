@@ -606,3 +606,114 @@ write all git tag and description in README.md
 
 ---
 
+---
+
+---
+
+### 🤖 AI (2026-05-15T06:48:03Z)
+
+I have successfully updated your `README.md` to include a dedicated **🏷️ 版本里程碑 (Git Milestones & Tags)** section. This table documents all key project versions along with their specific features and development dates:
+
+| Tag | Date | Description |
+| :--- | :--- | :--- |
+| `tv-basic-v2` | 2026-05-15 | **Advanced TradingView Dashboard**. Added themes (dark/light), drawing toolbox, adjustable height, ticker watermarks, and high-performance chronological rendering. |
+| `ok_20260515v1` | 2026-05-15 | **Core Integration**. Refactored `ai_comment.py` to use OpenRouter API and integrated initial TradingView Lightweight Charts engine. |
+| `v1.0-stable` | 2026-05-13 | **Original SMC × DRL Release**. Basic Plotly-based SMC indicators and DQN training workflow. |
+
+All changes have been committed and pushed to your [GitHub repository](https://github.com/huanchen1107/2026FintechSMC.git). This ensures your project documentation is now fully synchronized with its version history. 🚀🏁
+
+---
+
+### 👤 User (2026-05-15T06:48:08Z)
+
+write this  rule to ./ending.sh, every time i git tag, you need to write the git tag in README.md
+
+---
+
+---
+
+---
+
+### 🤖 AI (2026-05-15T06:48:24Z)
+
+I have updated your `./ending.sh` script to include a mandatory rule for Git tag documentation. 
+
+The **"Step 2: AI Reminder"** section now explicitly instructs the AI to verify and synchronize any new Git tags with the **"版本里程碑 (Git Milestones & Tags)"** section in your `README.md` before concluding the session.
+
+This ensures that every time you tag a version (like `tv-basic-v2`), the project documentation will stay up-to-date automatically during the cleanup process. 🚀🏷️
+
+---
+
+### 👤 User (2026-05-15T06:48:48Z)
+
+tradingview editting tool is not work
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+### 👤 User (2026-05-15T06:52:30Z)
+
+1. when the company is input, the chart updates auto (day), color default is white, 
+and i want to add all charting functions
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+### 👤 User (2026-05-15T06:54:26Z)
+
+help me deploy this github on vercel with my account huanchen1107@gmail.com and same project name, also show the github repo link in the homepage
+
+---
+
+### 👤 User (2026-05-15T06:54:40Z)
+
+auto mode
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+
+---
+

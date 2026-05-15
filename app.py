@@ -81,7 +81,7 @@ def render_chart():
     
     col1, col2 = st.columns([1, 2])
     with col1:
-        chart_tf = st.selectbox("Chart Timeframe", list(interval_map.keys()), index=0, key="chart_tf")
+        chart_tf = st.selectbox("Chart Timeframe", list(interval_map.keys()), index=2, key="chart_tf")
     with col2:
         rec = st.session_state.get("recommendation", {})
         snap = rec.get("mtf_snapshot", {}) if rec else {}
@@ -92,7 +92,7 @@ def render_chart():
     
     col3, col4 = st.columns([1, 2])
     with col3:
-        chart_engine = st.selectbox("Chart Engine", ["Plotly (SMC Focus)", "TradingView (Performance)"], index=0, key="chart_engine")
+        chart_engine = st.selectbox("Chart Engine", ["Plotly (SMC Focus)", "TradingView (Performance)"], index=1, key="chart_engine")
     with col4:
         st.write("") # placeholder
 
@@ -240,17 +240,29 @@ def render_plotly_chart(df, rec, snap, show_rr):
 
 
 
+
+
 def render_tradingview_chart(df, rec, snap):
     st.subheader("TradingView Advanced Dashboard")
     
     # ── Advanced Chart Settings ──
     col_set1, col_set2, col_set3 = st.columns([1, 1, 2])
     with col_set1:
-        chart_theme = st.selectbox("Theme", ["dark", "light"], index=0, key="tv_theme")
+        chart_theme = st.selectbox("Theme", ["light", "dark"], index=0, key="tv_theme")
     with col_set2:
         chart_height = st.slider("Chart Height", 400, 1000, 600, step=50, key="tv_height")
     with col_set3:
         show_watermark = st.checkbox("Enable Watermark", value=True, key="tv_watermark")
+
+    with st.expander("🛠️ Drawing Tools Help & Hotkeys"):
+        st.markdown("""
+        - **Trendline**: `Alt + T`
+        - **Horizontal Line**: `Alt + H`
+        - **Ray**: `Alt + R`
+        - **Undo**: `Ctrl/Cmd + Z`
+        - **Delete Selected**: `Backspace` or `Delete`
+        - **Note**: If the UI icons on the left are unresponsive, please use the **Hotkeys** above while the chart is focused.
+        """)
 
     try:
         # 1. Prepare Data
@@ -279,15 +291,16 @@ def render_tradingview_chart(df, rec, snap):
         chart_df = chart_df.dropna(subset=['open', 'high', 'low', 'close'])
 
         # 2. Initialize Advanced Chart
-        chart = StreamlitChart(width=None, height=chart_height, toolbox=True)
+        chart = StreamlitChart(width=1000, height=chart_height, toolbox=True)
         
-        # Configuration using standard API
+        # Configuration
         bg_color = '#131722' if chart_theme == 'dark' else '#ffffff'
         text_color = '#d1d4dc' if chart_theme == 'dark' else '#131722'
         grid_color = '#1f222d' if chart_theme == 'dark' else '#f0f3fa'
         
         chart.layout(background_color=bg_color, text_color=text_color, font_size=12)
         chart.grid(vert_enabled=True, horz_enabled=True, color=grid_color)
+        chart.legend(visible=True, font_size=14)
         
         if show_watermark:
             ticker_name = st.session_state.get("ticker", "STOCK")
@@ -295,10 +308,17 @@ def render_tradingview_chart(df, rec, snap):
 
         # Set Data
         plot_df = chart_df[['time', 'open', 'high', 'low', 'close', 'volume']].copy()
-        chart.set(plot_df)
+                chart.set(plot_df)
+        
+        # Add EMA lines
+        line20 = chart.create_line(name='EMA 20', color='rgba(41, 98, 255, 0.6)')
+        line20.set(chart_df[['time', 'ema20']].rename(columns={'ema20': 'value'}))
+        
+        line50 = chart.create_line(name='EMA 50', color='rgba(255, 152, 0, 0.6)')
+        line50.set(chart_df[['time', 'ema50']].rename(columns={'ema50': 'value'}))
+
         
         # 3. Add Dynamic Markers
-        # BUY/SELL
         ret_data = st.session_state.get("model_ret", {})
         bt_trades_df = ret_data.get("test_backtest", {}).get("trades_df") if ret_data else None
         
@@ -315,7 +335,6 @@ def render_tradingview_chart(df, rec, snap):
                 else:
                     chart.marker(time=actual_time_str, position='aboveBar', color='#f7525f', shape='arrowDown', text=f"SELL")
 
-        # SMC Markers
         if 'ob' in chart_df.columns:
             for i, row in chart_df[chart_df['ob'] != 0].tail(20).iterrows():
                 color = "#22ab94" if row['ob'] > 0 else "#f7525f"
@@ -327,6 +346,16 @@ def render_tradingview_chart(df, rec, snap):
                 chart.marker(time=row['time'], position='belowBar' if row['fvg'] > 0 else 'aboveBar', color=color, shape='circle', text="FVG")
 
         chart.load()
+    except Exception as e:
+        st.error(f"Advanced Chart Error: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+
+    except Exception as e:
+        st.error(f"Advanced Chart Error: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+
     except Exception as e:
         st.error(f"Advanced Chart Error: {e}")
         import traceback
@@ -379,7 +408,13 @@ def main():
         html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
     </style>
     <div style="padding: 1.2rem 0 0.6rem 0; border-bottom: 2px solid #E0E0E0; margin-bottom: 1.5rem; text-align: center;">
-        <h1 style="margin: 0; font-size: 3.4rem; font-weight: 700; color: #1A1A2E; font-family: 'Inter', sans-serif;">
+        
+        <div style="position: absolute; top: 1rem; right: 1rem;">
+            <a href="https://github.com/huanchen1107/2026FintechSMC" target="_blank">
+                <img src="https://img.shields.io/badge/GitHub-View%20Source-181717?style=for-the-badge&logo=github" alt="GitHub">
+            </a>
+        </div>
+<h1 style="margin: 0; font-size: 3.4rem; font-weight: 700; color: #1A1A2E; font-family: 'Inter', sans-serif;">
             SMC × DRL Trading Platform
         </h1>
         <p style="margin: 0.3rem 0 0 0; font-size: 0.95rem; color: #666; font-family: 'Inter', sans-serif;">
@@ -401,6 +436,8 @@ def main():
     col_input1, col_input2, col_input3, col_btn1, col_btn2 = st.columns([2.5, 1.5, 1.5, 0.7, 1.0])
     with col_input1:
         ticker = st.text_input("Ticker (e.g. AAPL, 2330.TW)", value="")
+    if ticker and ticker != st.session_state.get("ticker") and ticker.strip() != "":
+        st.session_state["auto_fetch"] = True
     with col_input2:
         start_date = st.date_input("Start Date", value=pd.to_datetime(st.session_state.get("start_date", cfg.start_date)))
     with col_input3:
@@ -492,7 +529,8 @@ def main():
 
     st.markdown('<div style="border-top: 2px solid #E0E0E0; margin: -0.5rem 0 1rem 0;"></div>', unsafe_allow_html=True)
 
-    if start_btn:
+    if start_btn or st.session_state.get("auto_fetch", False):
+        st.session_state.pop("auto_fetch", None)
         if not ticker:
             st.warning("Please enter a ticker symbol")
             return
