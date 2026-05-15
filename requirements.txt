@@ -1,0 +1,10 @@
+torch
+numpy
+pandas
+yfinance
+matplotlib
+plotly
+streamlit
+ta
+smartmoneyconcepts
+requestspython-dotenv
