@@ -717,3 +717,237 @@ auto mode
 
 ---
 
+---
+
+---
+
+### 🤖 AI (2026-05-15T06:55:46Z)
+
+I have successfully integrated your requested features and prepared the project for deployment.
+
+### 🌟 New Features Implemented:
+1.  **Auto-Update on Input**: The chart now automatically fetches and analyzes data as soon as you type a new ticker symbol (e.g., `TSLA` or `NVDA`) and press Enter, eliminating the need to manually click the "Fetch" button every time.
+2.  **Default Settings Optimized**:
+    *   **Timeframe**: Defaults to **1d (D1)** for a clean daily view.
+    *   **Theme**: Defaults to **Light (White)** mode for high readability.
+    *   **Engine**: Defaults to **TradingView Advanced Dashboard**.
+3.  **Enhanced Technical Analysis**:
+    *   **Overlay Indicators**: Added **EMA 20** (Blue) and **EMA 50** (Orange) to the TradingView chart by default.
+    *   **Legend & Info**: Enabled the chart legend to show live price data and ticker information.
+<truncated 1332 bytes>
+
+---
+
+### 👤 User (2026-05-15T06:59:45Z)
+
+which file is the main file app.py or start_app.py?
+
+---
+
+### 👤 User (2026-05-15T06:59:18Z)
+
+The following changes were made by the USER to: /Users/huango/Desktop/Projects/2026FintechSMC/app.py. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -40,7 +40,7 @@
+ 
+ def process_data_for_chart(raw_df, interval, rolling_window):
+     """Process data with smartmoneyconcepts for chart display."""
+-    df = raw_df.copy()
++    df = raw_df.loc[:, ~raw_df.columns.duplicated()].copy()
+     df.set_index("date", inplace=True)
+     resample_rules = {"1h": None, "4h": "4h", "1d": "D", "1wk": "W-MON"}
+     rule = resample_rules.get(interval)
+[diff_block_end]
+
+Please note that the above snippet only shows the MODIFIED lines from the last change. It shows up to 3 lines of unchanged lines before and after the modified lines. The actual file contents may have many more lines not shown.
+
+---
+
+### 👤 User (2026-05-15T06:59:18Z)
+
+The following changes were made by the USER to: /Users/huango/Desktop/Projects/2026FintechSMC/app.py. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -81,7 +81,7 @@
+     
+     col1, col2 = st.columns([1, 2])
+     with col1:
+-        chart_tf = st.selectbox("Chart Timeframe", list(interval_map.keys()), index=0, key="chart_tf")
++        chart_tf = st.selectbox("Chart Timeframe", list(interval_map.keys()), index=2, key="chart_tf")
+     with col2:
+         rec = st.session_state.get("recommendation", {})
+         snap = rec.get("mtf_snapshot", {}) if rec else {}
+[diff_block_end]
+
+Please note that the above snippet only shows the MODIFIED lines from the last change. It shows up to 3 lines of unchanged lines before and after the modified lines. The actual file contents may have many more lines not shown.
+
+---
+
+### 👤 User (2026-05-15T06:59:18Z)
+
+The following changes were made by the USER to: /Users/huango/Desktop/Projects/2026FintechSMC/app.py. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -92,7 +92,7 @@
+     
+     col3, col4 = st.columns([1, 2])
+     with col3:
+-        chart_engine = st.selectbox("Chart Engine", ["Plotly (SMC Focus)", "TradingView (Performance)"], index=0, key="chart_engine")
++        chart_engine = st.selectbox("Chart Engine", ["Plotly (SMC Focus)", "TradingView (Performance)"], index=1, key="chart_engine")
+     with col4:
+         st.write("") # placeholder
+ 
+[diff_block_end]
+
+Please note that the above snippet only shows the MODIFIED lines from the last change. It shows up to 3 lines of unchanged lines before and after the modified lines. The actual file contents may have many more lines not shown.
+
+---
+
+### 👤 User (2026-05-15T06:59:18Z)
+
+The following changes were made by the USER to: /Users/huango/Desktop/Projects/2026FintechSMC/app.py. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -234,53 +234,160 @@
+ 
+ 
+ 
++
++
++
++
++
++
++
++
+ def render_tradingview_chart(df, rec, snap):
+-    st.subheader("TradingView Lightweight Chart")
+-    
+-    # Prepare data for lightweight-charts
+-    # Ensure columns are unique and correctly named
+-    chart_df = df.loc[:, ~df.columns.duplicated()].copy()
+-    if 'time' in chart_df.columns:
+-        chart_df = chart_df.drop(columns=['time'])
+-    chart_df['time'] = chart_df['date']
+-    
+-    # Keep only OHLCV + time + others for markers
+-    # The library is strict about duplicate keys
+-    chart = StreamlitChart(width=1000, height=550, toolbox=True)
+-    chart.set(chart_df)
+-    
+-    # Add Markers for Buy/Sell
+-    ret_data = st.session_state.get("model_ret", {})
+-    bt_data = ret_data.get("test_backtest", {}) if ret_data else {}
+<truncated 8386 bytes>
+
+---
+
+### 👤 User (2026-05-15T06:59:18Z)
+
+The following changes were made by the USER to: /Users/huango/Desktop/Projects/2026FintechSMC/app.py. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -408,7 +408,13 @@
+         html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
+     </style>
+     <div style="padding: 1.2rem 0 0.6rem 0; border-bottom: 2px solid #E0E0E0; margin-bottom: 1.5rem; text-align: center;">
+-        <h1 style="margin: 0; font-size: 3.4rem; font-weight: 700; color: #1A1A2E; font-family: 'Inter', sans-serif;">
++        
++        <div style="position: absolute; top: 1rem; right: 1rem;">
++            <a href="https://github.com/huanchen1107/2026FintechSMC" target="_blank">
++                <img src="https://img.shields.io/badge/GitHub-View%20Source-181717?style=for-the-badge&logo=github" alt="GitHub">
++            </a>
++        </div>
+<truncated 523 bytes>
+
+---
+
+### 👤 User (2026-05-15T06:59:18Z)
+
+The following changes were made by the USER to: /Users/huango/Desktop/Projects/2026FintechSMC/app.py. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -436,6 +436,8 @@
+     col_input1, col_input2, col_input3, col_btn1, col_btn2 = st.columns([2.5, 1.5, 1.5, 0.7, 1.0])
+     with col_input1:
+         ticker = st.text_input("Ticker (e.g. AAPL, 2330.TW)", value="")
++    if ticker and ticker != st.session_state.get("ticker") and ticker.strip() != "":
++        st.session_state["auto_fetch"] = True
+     with col_input2:
+         start_date = st.date_input("Start Date", value=pd.to_datetime(st.session_state.get("start_date", cfg.start_date)))
+     with col_input3:
+[diff_block_end]
+
+Please note that the above snippet only shows the MODIFIED lines from the last change. It shows up to 3 lines of unchanged lines before and after the modified lines. The actual file contents may have many more lines not shown.
+
+---
+
+### 👤 User (2026-05-15T06:59:18Z)
+
+The following changes were made by the USER to: /Users/huango/Desktop/Projects/2026FintechSMC/app.py. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -529,7 +529,8 @@
+ 
+     st.markdown('<div style="border-top: 2px solid #E0E0E0; margin: -0.5rem 0 1rem 0;"></div>', unsafe_allow_html=True)
+ 
+-    if start_btn:
++    if start_btn or st.session_state.get("auto_fetch", False):
++        st.session_state.pop("auto_fetch", None)
+         if not ticker:
+             st.warning("Please enter a ticker symbol")
+             return
+[diff_block_end]
+
+Please note that the above snippet only shows the MODIFIED lines from the last change. It shows up to 3 lines of unchanged lines before and after the modified lines. The actual file contents may have many more lines not shown.
+
+---
+
+### 👤 User (2026-05-15T06:59:18Z)
+
+The USER performed the following action:
+Show the contents of file /Users/huango/Desktop/Projects/2026FintechSMC/app.py from lines 77 to 96
+File Path: `file:///Users/huango/Desktop/Projects/2026FintechSMC/app.py`
+Total Lines: 746
+Total Bytes: 33373
+Showing lines 77 to 96
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+77:         st.info("Waiting for data to render chart...")
+78:         return
+79: 
+80:     interval_map = {"1h (H1)": "1h", "4h (H4)": "4h", "1d (D1)": "1d", "1wk (W1)": "1wk"}
+81:     
+82:     col1, col2 = st.columns([1, 2])
+83:     with col1:
+84:         chart_tf = st.selectbox("Chart Timeframe", list(interval_map.keys()), index=2, key="chart_tf")
+85:     with col2:
+86:         rec = st.session_state.get("recommendation", {})
+87:         snap = rec.get("mtf_snapshot", {}) if rec else {}
+<truncated 528 bytes>
+
+---
+
+---
+
+---
+
+---
+
+---
+
+### 🤖 AI (2026-05-15T07:00:02Z)
+
+The main file for the trading platform is **`app.py`**. 
+
+Here is a quick breakdown:
+- **`app.py`**: The core Streamlit application file containing the UI logic, TradingView integration, and dashboard.
+- **`start_app.sh`**: A shell script helper that activates your virtual environment and runs `streamlit run app.py` for you.
+
+When deploying or running the project, you should always point to **`app.py`**.
+
+---
+
+### 👤 User (2026-05-15T07:03:03Z)
+
+git tag this as tv-ok-v2
+
+---
+
+---
+
+---
+

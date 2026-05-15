@@ -144,6 +144,7 @@ streamlit run app.py
 
 | Tag | Date | Description |
 | :--- | :--- | :--- |
-| `tv-basic-v2` | 2026-05-15 | **Advanced TradingView Dashboard**. Added themes (dark/light), drawing toolbox, adjustable height, ticker watermarks, and high-performance chronological rendering. |
+| `tv-ok-v2` | 2026-05-15 | **Ultimate TradingView Dashboard**. Final stable version with auto-update, EMAs, hotkeys help, light theme default, and fixed-width event reliability. |
+| `tv-basic-v2` | 2026-05-15 | **Advanced TradingView Dashboard**. Added themes, drawing toolbox, and watermarks. |
 | `ok_20260515v1` | 2026-05-15 | **Core Integration**. Refactored `ai_comment.py` to use OpenRouter API and integrated initial TradingView Lightweight Charts engine. |
 | `v1.0-stable` | 2026-05-13 | **Original SMC × DRL Release**. Basic Plotly-based SMC indicators and DQN training workflow. |
