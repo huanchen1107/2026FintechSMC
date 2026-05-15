@@ -313,10 +313,10 @@ def render_tradingview_chart(df, rec, snap):
         
         # Add EMA lines
         line20 = chart.create_line(name='EMA 20', color='rgba(41, 98, 255, 0.6)')
-        line20.set(chart_df[['time', 'ema20']].rename(columns={'ema20': 'value'}))
+        line20.set(chart_df[['time', 'ema20']].rename(columns={'ema20': 'EMA 20'}))
         
         line50 = chart.create_line(name='EMA 50', color='rgba(255, 152, 0, 0.6)')
-        line50.set(chart_df[['time', 'ema50']].rename(columns={'ema50': 'value'}))
+        line50.set(chart_df[['time', 'ema50']].rename(columns={'ema50': 'EMA 50'}))
 
         
         # 3. Add Dynamic Markers

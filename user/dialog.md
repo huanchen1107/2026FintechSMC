@@ -1229,3 +1229,39 @@ KeyError: "['ema20'] not in index"
 
 ---
 
+---
+
+---
+
+### 🤖 AI (2026-05-15T07:25:13Z)
+
+I have resolved the `KeyError: "['ema20'] not in index"` by explicitly adding the EMA 20 and EMA 50 calculations to the data preparation pipeline in both `utils/data_utils.py` and `utils/data_utils_v2.py`.
+
+The TradingView dashboard requires these columns to render the technical indicator lines. By ensuring they are calculated during the chart data preparation stage, the application will now load and render the advanced chart without crashing.
+
+The fixes have been pushed to your GitHub repository. Please refresh your Streamlit Cloud app to verify. 📈✅🏁
+
+---
+
+### 👤 User (2026-05-15T07:26:47Z)
+
+TradingView Chart Error: No column named "EMA 20".
+
+Traceback (most recent call last):
+  File "/mount/src/2026fintechsmc/app.py", line 316, in render_tradingview_chart
+    line20.set(chart_df[['time', 'ema20']].rename(columns={'ema20': 'value'}))
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/adminuser/venv/lib/python3.14/site-packages/lightweight_charts/abstract.py", line 230, in set
+    raise NameError(f'No column named "{self.name}".')
+NameError: No column named "EMA 20".
+
+---
+
+---
+
+---
+
+---
+
+---
+
