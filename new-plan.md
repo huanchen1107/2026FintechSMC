@@ -145,3 +145,37 @@ with right:
 核心概念：
 
 模型資料庫解決「不要每次重訓」；交易配對資料庫解決「每一筆交易能不能被回顧、解釋、修正」。
+
+
+
+3. 
+
+# 📋 Strategy Debugger & Advanced Analysis Interface - Implementation Plan
+
+## 🎯 Objective
+Build a professional-grade strategy debugging and trade-analysis platform within the SMC × DRL Trading Platform to help users visually inspect, validate, and understand every BUY and SELL action.
+
+## 🚀 Core Features
+- [x] **Split-Screen Layout**: 75% interactive Plotly chart / 25% scrollable trade-pair table.
+- [x] **Trade-Pair Tracking**: Synchronized tracking of completed BUY → SELL pairs.
+- [x] **Interactive Zooming**: Auto-zoom to the selected trade region when a pair is selected from the list.
+- [x] **Visual Highlighting**:
+    - [x] Green/Red markers for Buy/Sell points.
+    - [x] Dotted connecting lines for trade paths.
+    - [x] Dimming effect for non-selected time periods.
+- [x] **Performance Analytics**: Real-time calculation of Win Rate, Avg PnL, and Total Trades.
+- [x] **Trade Filtering**: Filter trades by Profitable or Losing status.
+- [ ] **Strategy Reasonings**: Integrate detailed signal reasons (e.g., SMC OB Overlap, Trend Reversal) into the detail panel.
+- [ ] **Trade Replay Mode**: Add a "Candle Playback" mode for step-by-step strategy review.
+
+## 🛠️ Technical Stack
+- **Framework**: Streamlit
+- **Charting**: Plotly Graph Objects (for advanced interactivity and zooming)
+- **Data Engine**: Pandas (Trade-pair reconstruction logic)
+
+## 📅 Progress Tracking
+- **Phase 1**: Tab navigation and layout foundation. (Completed)
+- **Phase 2**: Trade-pair reconstruction logic. (Completed)
+- **Phase 3**: Plotly synchronization and auto-zoom logic. (Completed)
+- **Phase 4**: Advanced stats and filtering UI. (In Progress)
+- **Phase 5**: Replay mode and signal reasoning expansion. (Planned)
