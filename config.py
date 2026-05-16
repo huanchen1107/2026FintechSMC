@@ -35,15 +35,24 @@ class Config:
     initial_cash: float = 100000.0
     transaction_cost_rate: float = 0.001425
     tax_rate: float = 0.003
+    state_lookback: int = 100
 
     # ── DQN training ──
-    episodes: int = 25
+    episodes: int = 1000
+    early_stop_enabled: bool = False
+    early_stop_patience: int = 50
+    early_stop_min_delta: float = 0.001
     batch_size: int = 64
     gamma: float = 0.95
     lr: float = 1e-4
     replay_size: int = 100000
     min_replay_size: int = 1200
     target_update_freq: int = 300
+    use_prioritized_replay: bool = True
+    prioritized_replay_alpha: float = 0.6
+    prioritized_replay_beta_start: float = 0.4
+    prioritized_replay_beta_frames: int = 100000
+    training_rr_threshold: float = 2.0
 
     # ── Epsilon-greedy ──
     epsilon_start: float = 1.0
@@ -56,6 +65,9 @@ class Config:
     trade_penalty: float = 0.003
     mtf_bonus_weight: float = 0.003
     higher_tf_conflict_penalty: float = 0.002
+
+    # ── Strategy mode ──
+    strategy_mode: str = "dqn_position"
 
     # ── SMC feature params ──
     swing_window: int = 5
@@ -81,4 +93,10 @@ ACTION_NAMES = {
     1: "Adjust to 25% Position",
     2: "Adjust to 50% Position",
     3: "Adjust to 100% Position",
+}
+
+ACTION_POSITION_RATIOS_DQN_ON_BUY = [0.0, 1.0]
+ACTION_NAMES_DQN_ON_BUY = {
+    0: "Stay in Cash / 0% Position",
+    1: "Enter Full Position / 100%",
 }

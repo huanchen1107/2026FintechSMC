@@ -11,6 +11,7 @@ import yfinance as yf
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
 from ta.trend import MACD
+from smartmoneyconcepts import smc
 
 def set_seed(seed: int) -> None:
     random.seed(seed)
@@ -68,6 +69,8 @@ FEATURE_COLUMNS = [
     "h4_choch_bearish",
     "h4_liquidity_sweep_high",
     "h4_liquidity_sweep_low",
+    "h4_liquidity_sweep_bullish",
+    "h4_liquidity_sweep_bearish",
     "h4_bullish_fvg",
     "h4_bearish_fvg",
     "h4_bullish_ob_distance",
@@ -91,6 +94,8 @@ FEATURE_COLUMNS = [
     "h1_choch_bearish",
     "h1_liquidity_sweep_high",
     "h1_liquidity_sweep_low",
+    "h1_liquidity_sweep_bullish",
+    "h1_liquidity_sweep_bearish",
     "h1_bullish_fvg",
     "h1_bearish_fvg",
     "h1_bullish_ob_distance",
@@ -115,25 +120,57 @@ FEATURE_COLUMNS = [
     "w1_rr_ratio",
     "w1_rr_valid",
     "w1_rr_quality_score",
+    "w1_pd_valid",
 
     "d1_rr_risk_pct",
     "d1_rr_reward_pct",
     "d1_rr_ratio",
     "d1_rr_valid",
     "d1_rr_quality_score",
+    "d1_pd_valid",
 
     "h4_rr_risk_pct",
     "h4_rr_reward_pct",
     "h4_rr_ratio",
     "h4_rr_valid",
     "h4_rr_quality_score",
+    "h4_pd_valid",
 
     "h1_rr_risk_pct",
     "h1_rr_reward_pct",
     "h1_rr_ratio",
     "h1_rr_valid",
     "h1_rr_quality_score",
+    "h1_pd_valid",
 ]
+
+for _prefix in ("w1", "d1", "h4", "h1"):
+    FEATURE_COLUMNS.extend([
+        f"{_prefix}_swing_high_event",
+        f"{_prefix}_swing_low_event",
+        f"{_prefix}_swing_high_version",
+        f"{_prefix}_swing_low_version",
+        f"{_prefix}_swing_high_replaced",
+        f"{_prefix}_swing_low_replaced",
+        f"{_prefix}_active_swing_high",
+        f"{_prefix}_active_swing_low",
+        f"{_prefix}_lib_swing_highlow",
+        f"{_prefix}_lib_swing_level",
+        f"{_prefix}_lib_fvg",
+        f"{_prefix}_lib_fvg_top",
+        f"{_prefix}_lib_fvg_bottom",
+        f"{_prefix}_lib_bos",
+        f"{_prefix}_lib_choch",
+        f"{_prefix}_lib_bos_level",
+        f"{_prefix}_lib_ob",
+        f"{_prefix}_lib_ob_top",
+        f"{_prefix}_lib_ob_bottom",
+        f"{_prefix}_lib_ob_strength",
+        f"{_prefix}_lib_liquidity",
+        f"{_prefix}_lib_liquidity_level",
+        f"{_prefix}_lib_liquidity_end",
+        f"{_prefix}_lib_liquidity_swept",
+    ])
 
 
 # ── Datetime helpers ──
@@ -287,24 +324,46 @@ def add_smc_features(df: pd.DataFrame, prefix: str, swing_window: int = 5, lookb
 
     df[shc] = 0
     df[slc] = 0
+    df[f"{prefix}_swing_high_event"] = 0
+    df[f"{prefix}_swing_low_event"] = 0
+    df[f"{prefix}_swing_high_version"] = 0
+    df[f"{prefix}_swing_low_version"] = 0
+    df[f"{prefix}_swing_high_replaced"] = 0
+    df[f"{prefix}_swing_low_replaced"] = 0
     for i in range(swing_window, len(df) - swing_window):
         local_high = df["high"].iloc[i - swing_window:i + swing_window + 1].max()
         local_low = df["low"].iloc[i - swing_window:i + swing_window + 1].min()
         if df["high"].iloc[i] == local_high:
             df.iloc[i, df.columns.get_loc(shc)] = 1
+            df.iloc[i, df.columns.get_loc(f"{prefix}_swing_high_event")] = 1
         if df["low"].iloc[i] == local_low:
             df.iloc[i, df.columns.get_loc(slc)] = 1
+            df.iloc[i, df.columns.get_loc(f"{prefix}_swing_low_event")] = 1
 
     df[lhc] = np.nan
     df[llc] = np.nan
+    df[f"{prefix}_active_swing_high"] = np.nan
+    df[f"{prefix}_active_swing_low"] = np.nan
     last_high = last_low = np.nan
+    last_high_ver = 0
+    last_low_ver = 0
     for i in range(len(df)):
         if df[shc].iloc[i] == 1:
+            if not pd.isna(last_high):
+                df.iloc[i, df.columns.get_loc(f"{prefix}_swing_high_replaced")] = 1
+            last_high_ver += 1
             last_high = df["high"].iloc[i]
         if df[slc].iloc[i] == 1:
+            if not pd.isna(last_low):
+                df.iloc[i, df.columns.get_loc(f"{prefix}_swing_low_replaced")] = 1
+            last_low_ver += 1
             last_low = df["low"].iloc[i]
         df.iloc[i, df.columns.get_loc(lhc)] = last_high
         df.iloc[i, df.columns.get_loc(llc)] = last_low
+        df.iloc[i, df.columns.get_loc(f"{prefix}_active_swing_high")] = last_high
+        df.iloc[i, df.columns.get_loc(f"{prefix}_active_swing_low")] = last_low
+        df.iloc[i, df.columns.get_loc(f"{prefix}_swing_high_version")] = last_high_ver
+        df.iloc[i, df.columns.get_loc(f"{prefix}_swing_low_version")] = last_low_ver
 
     # BOS
     df[f"{prefix}_bos_bullish"] = ((df["close"] > df[lhc].shift(1)) & df[lhc].shift(1).notna()).astype(int)
@@ -329,6 +388,13 @@ def add_smc_features(df: pd.DataFrame, prefix: str, swing_window: int = 5, lookb
     df[f"{prefix}_prev_low_20"] = df["low"].rolling(20).min().shift(1)
     df[f"{prefix}_liquidity_sweep_high"] = ((df["high"] > df[f"{prefix}_prev_high_20"]) & (df["close"] < df[f"{prefix}_prev_high_20"])).astype(int)
     df[f"{prefix}_liquidity_sweep_low"] = ((df["low"] < df[f"{prefix}_prev_low_20"]) & (df["close"] > df[f"{prefix}_prev_low_20"])).astype(int)
+    df[f"{prefix}_liquidity_sweep_bearish"] = df[f"{prefix}_liquidity_sweep_high"]
+    df[f"{prefix}_liquidity_sweep_bullish"] = df[f"{prefix}_liquidity_sweep_low"]
+    df[f"{prefix}_liquidity_sweep_tag"] = np.where(
+        df[f"{prefix}_liquidity_sweep_bullish"] == 1,
+        "Bullish Sweep",
+        np.where(df[f"{prefix}_liquidity_sweep_bearish"] == 1, "Bearish Sweep", "None"),
+    )
 
     # Premium / Discount
     df[f"{prefix}_range_high"] = df["high"].rolling(lookback_range).max()
@@ -340,6 +406,15 @@ def add_smc_features(df: pd.DataFrame, prefix: str, swing_window: int = 5, lookb
     # FVG
     df[f"{prefix}_bullish_fvg"] = (df["low"] > df["high"].shift(2)).astype(int)
     df[f"{prefix}_bearish_fvg"] = (df["high"] < df["low"].shift(2)).astype(int)
+    df[f"{prefix}_fvg_mid"] = np.where(
+        df[f"{prefix}_bullish_fvg"] == 1,
+        (df["low"] + df["high"].shift(2)) / 2.0,
+        np.where(
+            df[f"{prefix}_bearish_fvg"] == 1,
+            (df["high"] + df["low"].shift(2)) / 2.0,
+            np.nan,
+        ),
+    )
 
     # OB distance
     df[f"{prefix}_bullish_ob_price"] = np.nan
@@ -372,10 +447,65 @@ def add_smc_features(df: pd.DataFrame, prefix: str, swing_window: int = 5, lookb
     return df.replace([np.inf, -np.inf], np.nan)
 
 
+def add_library_smc_features(df: pd.DataFrame, prefix: str, swing_length: int = 50) -> pd.DataFrame:
+    """
+    Add upstream smartmoneyconcepts outputs alongside local engineered SMC features.
+    """
+    if df.empty:
+        return df
+
+    out = df.copy()
+    ohlc = out[["open", "high", "low", "close", "volume"]].copy()
+    swing = smc.swing_highs_lows(ohlc, swing_length=swing_length)
+    fvg = smc.fvg(ohlc, join_consecutive=False)
+    bos = smc.bos_choch(ohlc, swing)
+    ob = smc.ob(ohlc, swing)
+    liquidity = smc.liquidity(ohlc, swing)
+    prev_hl = smc.previous_high_low(ohlc)
+    retr = smc.retracements(ohlc, swing)
+
+    out[f"{prefix}_lib_swing_highlow"] = swing["HighLow"].astype(float).values
+    out[f"{prefix}_lib_swing_level"] = swing["Level"].astype(float).values
+    out[f"{prefix}_lib_fvg"] = fvg["FVG"].astype(float).values
+    out[f"{prefix}_lib_fvg_top"] = fvg["Top"].astype(float).values
+    out[f"{prefix}_lib_fvg_bottom"] = fvg["Bottom"].astype(float).values
+    out[f"{prefix}_lib_fvg_mitigated_index"] = fvg["MitigatedIndex"].astype(float).values
+    out[f"{prefix}_lib_bos"] = bos["BOS"].astype(float).values
+    out[f"{prefix}_lib_choch"] = bos["CHOCH"].astype(float).values
+    out[f"{prefix}_lib_bos_level"] = bos["Level"].astype(float).values
+    out[f"{prefix}_lib_bos_broken_index"] = bos["BrokenIndex"].astype(float).values
+    out[f"{prefix}_lib_ob"] = ob["OB"].astype(float).values
+    out[f"{prefix}_lib_ob_top"] = ob["Top"].astype(float).values
+    out[f"{prefix}_lib_ob_bottom"] = ob["Bottom"].astype(float).values
+    out[f"{prefix}_lib_ob_volume"] = ob["OBVolume"].astype(float).values
+    out[f"{prefix}_lib_ob_mitigated_index"] = ob["MitigatedIndex"].astype(float).values
+    out[f"{prefix}_lib_ob_strength"] = ob["Percentage"].astype(float).values
+    out[f"{prefix}_lib_liquidity"] = liquidity["Liquidity"].astype(float).values
+    out[f"{prefix}_lib_liquidity_level"] = liquidity["Level"].astype(float).values
+    out[f"{prefix}_lib_liquidity_end"] = liquidity["End"].astype(float).values
+    out[f"{prefix}_lib_liquidity_swept"] = liquidity["Swept"].astype(float).values
+    out[f"{prefix}_lib_liquidity_sweep_tag"] = np.where(
+        out[f"{prefix}_lib_liquidity"] == 1,
+        "Bullish Liquidity",
+        np.where(out[f"{prefix}_lib_liquidity"] == -1, "Bearish Liquidity", "None"),
+    )
+
+    if isinstance(prev_hl, pd.DataFrame):
+        for col in prev_hl.columns:
+            out[f"{prefix}_lib_prev_{col.lower()}"] = prev_hl[col].astype(float).values
+
+    if isinstance(retr, pd.DataFrame):
+        for col in retr.columns:
+            out[f"{prefix}_lib_retr_{col.lower()}"] = retr[col].astype(float).values
+
+    return out
+
+
 def prepare_timeframe_features(df, prefix, cfg):
     df = ensure_datetime_index(df)
     df = add_basic_indicators(df, prefix=prefix)
     df = add_smc_features(df, prefix=prefix, swing_window=cfg.swing_window, lookback_range=cfg.lookback_range)
+    df = add_library_smc_features(df, prefix=prefix, swing_length=cfg.swing_window)
     return df
 
 
@@ -423,6 +553,33 @@ def add_mtf_confluence_features(df):
     df["mtf_all_bearish"] = ((df["w1_smc_bias"] < 0) & (df["d1_smc_bias"] < 0) & (df["h4_smc_bias"] < 0) & (df["h1_smc_bias"] < 0)).astype(int)
     df["higher_tf_bullish"] = ((df["w1_smc_bias"] > 0) & (df["d1_smc_bias"] > 0)).astype(int)
     df["higher_tf_bearish"] = ((df["w1_smc_bias"] < 0) & (df["d1_smc_bias"] < 0)).astype(int)
+    return df
+
+
+def add_pd_validity_features(df: pd.DataFrame, prefixes: Tuple[str, ...] = ("w1", "d1", "h4", "h1")) -> pd.DataFrame:
+    """
+    Mark PD-array entries as valid only while current price has not crossed
+    the relevant PD zone from the prior bar to the current bar.
+    """
+    df = df.copy()
+    prev_close = df["close"].shift(1)
+    curr_close = df["close"]
+
+    for prefix in prefixes:
+        swing_low = df[f"{prefix}_last_swing_low"] if f"{prefix}_last_swing_low" in df.columns else df["low"]
+        swing_high = df[f"{prefix}_last_swing_high"] if f"{prefix}_last_swing_high" in df.columns else df["high"]
+        fvg_top = df[f"{prefix}_fvg_top"] if f"{prefix}_fvg_top" in df.columns else swing_high
+        fvg_bottom = df[f"{prefix}_fvg_bottom"] if f"{prefix}_fvg_bottom" in df.columns else swing_low
+
+        zone_low = pd.concat([swing_low, fvg_bottom], axis=1).min(axis=1)
+        zone_high = pd.concat([swing_high, fvg_top], axis=1).max(axis=1)
+
+        crossed = (
+            ((prev_close <= zone_high) & (curr_close >= zone_low))
+            | ((prev_close >= zone_low) & (curr_close <= zone_high))
+        )
+        df[f"{prefix}_pd_valid"] = (~crossed & zone_high.notna() & zone_low.notna()).astype(int)
+
     return df
 
 def add_risk_reward_features_by_timeframe(
@@ -572,6 +729,62 @@ def add_risk_reward_features_by_timeframe(
     return df
 
 
+def build_pd_arrays_table(df: pd.DataFrame, prefixes: Tuple[str, ...] = ("w1", "d1", "h4", "h1")) -> pd.DataFrame:
+    """
+    Build a compact PD arrays table for the latest visible timeframe snapshot.
+    Includes the full SMC feature bundle per timeframe so Step 1 can serve as
+    the market-structure source of truth for Step 2 and Step 4.
+    """
+    latest = df.iloc[-1]
+    latest_ts = latest.get("datetime", latest.get("date", latest.name if hasattr(latest, "name") else pd.NaT))
+    latest_ts = pd.Timestamp(latest_ts) if pd.notna(latest_ts) else pd.NaT
+    timestamp_str = latest_ts.strftime("%Y-%m-%d %H:%M") if pd.notna(latest_ts) else ""
+    close_val = latest.get("close", np.nan)
+    rows = []
+    for prefix in prefixes:
+        row = {
+            "timeframe": prefix.upper(),
+            "timestamp": timestamp_str,
+            "close_price": float(close_val) if pd.notna(close_val) else np.nan,
+        }
+        feature_keys = [
+            "open", "high", "low", "close",
+            "return_1", "return_5", "volume_change",
+            "ma_gap_10", "ma_gap_20", "ma_gap_60",
+            "rsi", "atr", "atr_pct", "macd_diff",
+            "range_position", "premium_zone", "discount_zone",
+            "previous_high", "previous_low",
+            "last_swing_high", "last_swing_low",
+            "swing_high_event", "swing_low_event",
+            "swing_high_version", "swing_low_version",
+            "swing_high_replaced", "swing_low_replaced",
+            "active_swing_high", "active_swing_low",
+            "bos_bullish", "bos_bearish",
+            "choch_bullish", "choch_bearish",
+            "liquidity_sweep_high", "liquidity_sweep_low",
+            "bullish_fvg", "bearish_fvg",
+            "fvg_mid", "fvg_top", "fvg_bottom",
+            "bullish_ob", "bearish_ob",
+            "bullish_ob_price", "bearish_ob_price",
+            "bullish_ob_distance", "bearish_ob_distance",
+            "structure_direction", "smc_bull_score", "smc_bear_score", "smc_bias",
+            "pd_valid",
+            "rr_entry_price", "rr_stop_loss_price", "rr_take_profit_price",
+            "rr_risk_pct", "rr_reward_pct", "rr_ratio", "rr_valid", "rr_quality_score", "rr_take_profit_basis",
+        ]
+        for key in feature_keys:
+            value = latest.get(f"{prefix}_{key}", np.nan)
+            if pd.isna(value):
+                row[key] = np.nan
+            else:
+                row[key] = float(value) if isinstance(value, (int, float, np.integer, np.floating)) else value
+        # Backward-compatible aliases for downstream UI and review logic.
+        row["swing_high"] = row.get("last_swing_high", np.nan)
+        row["swing_low"] = row.get("last_swing_low", np.nan)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 # ── Data split & standardization ──
 
 def split_data_time_order(df, cfg):
@@ -615,8 +828,10 @@ def build_mtf_dataset(df_h1_raw, df_d1_raw, cfg):
     out = merge_asof_higher_tf(df_h1_feat, df_h4_feat, h4_cols)
     out = merge_asof_higher_tf(out, df_d1_feat, d1_cols)
     out = merge_asof_higher_tf(out, df_w1_feat, w1_cols)
-    out = out.replace([np.inf, -np.inf], np.nan).dropna()
+    out = out.replace([np.inf, -np.inf], np.nan)
     out = add_mtf_confluence_features(out)
+    
+    out = add_pd_validity_features(out, prefixes=("w1", "d1", "h4", "h1"))
     
     # NEW IN V2
     out = add_risk_reward_features_by_timeframe(
@@ -628,7 +843,13 @@ def build_mtf_dataset(df_h1_raw, df_d1_raw, cfg):
         min_rr_threshold=cfg.min_rr_threshold,
     )
     
-    out = out.replace([np.inf, -np.inf], np.nan).dropna()
+    out = out.replace([np.inf, -np.inf], np.nan)
+    anchor_cols = [c for c in ["datetime", "close"] if c in out.columns]
+    if anchor_cols:
+        out = out.dropna(subset=anchor_cols)
+    fill_cols = [c for c in out.columns if c not in anchor_cols]
+    if fill_cols:
+        out[fill_cols] = out[fill_cols].ffill().bfill().fillna(0)
     return out
 
 

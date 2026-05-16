@@ -1,4 +1,4 @@
-"""DQN Agent with integrated replay buffer, step-based target update, and gradient clipping."""
+"""Double DQN Agent with prioritized replay buffer, step-based target update, and gradient clipping."""
 from __future__ import annotations
 
 import random
@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 from model.network import QNetwork
-from utils.replay_buffer import ReplayBuffer
+from utils.replay_buffer import PrioritizedReplayBuffer
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -31,6 +31,10 @@ class DQNAgent:
             self.batch_size = cfg.batch_size
             self.target_update_freq = cfg.target_update_freq
             replay_size = cfg.replay_size
+            self.use_prioritized_replay = bool(getattr(cfg, "use_prioritized_replay", True))
+            self.prioritized_replay_alpha = float(getattr(cfg, "prioritized_replay_alpha", 0.6))
+            self.prioritized_replay_beta_start = float(getattr(cfg, "prioritized_replay_beta_start", 0.4))
+            self.prioritized_replay_beta_frames = int(getattr(cfg, "prioritized_replay_beta_frames", 100000))
         else:
             self.gamma = 0.95
             self.lr = 1e-4
@@ -41,6 +45,10 @@ class DQNAgent:
             self.batch_size = 64
             self.target_update_freq = 300
             replay_size = 100000
+            self.use_prioritized_replay = True
+            self.prioritized_replay_alpha = 0.6
+            self.prioritized_replay_beta_start = 0.4
+            self.prioritized_replay_beta_frames = 100000
 
         self.policy_net = QNetwork(state_dim, action_dim).to(DEVICE)
         self.target_net = QNetwork(state_dim, action_dim).to(DEVICE)
@@ -48,7 +56,12 @@ class DQNAgent:
         self.target_net.eval()
 
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=self.lr)
-        self.replay_buffer = ReplayBuffer(replay_size)
+        self.replay_buffer = PrioritizedReplayBuffer(
+            replay_size,
+            alpha=self.prioritized_replay_alpha,
+            beta_start=self.prioritized_replay_beta_start,
+            beta_frames=self.prioritized_replay_beta_frames,
+        )
         self.steps = 0
 
     def select_action(self, state: np.ndarray, training: bool = True) -> int:
@@ -71,18 +84,21 @@ class DQNAgent:
         if len(self.replay_buffer) < self.batch_size:
             return None
 
-        states, actions, rewards, next_states, dones = self.replay_buffer.sample(self.batch_size)
+        states, actions, rewards, next_states, dones, indices, weights = self.replay_buffer.sample(self.batch_size)
         current_q = self.policy_net(states).gather(1, actions)
 
         with torch.no_grad():
-            next_q = self.target_net(next_states).max(dim=1, keepdim=True)[0]
+            next_actions = self.policy_net(next_states).argmax(dim=1, keepdim=True)
+            next_q = self.target_net(next_states).gather(1, next_actions)
             target_q = rewards + self.gamma * next_q * (1 - dones)
 
-        loss = nn.SmoothL1Loss()(current_q, target_q)
+        td_error = target_q - current_q
+        loss = (weights * nn.SmoothL1Loss(reduction="none")(current_q, target_q)).mean()
         self.optimizer.zero_grad()
         loss.backward()
         nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
         self.optimizer.step()
+        self.replay_buffer.update_priorities(indices.detach().cpu().numpy(), td_error.detach().abs().cpu().numpy())
 
         self.steps += 1
         if self.steps % self.target_update_freq == 0:
@@ -97,6 +113,8 @@ class DQNAgent:
         checkpoint = {
             "model_state_dict": self.policy_net.state_dict(),
             "epsilon": self.epsilon,
+            "double_dqn": True,
+            "prioritized_replay": True,
             **extra,
         }
         torch.save(checkpoint, path)

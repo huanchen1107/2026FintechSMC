@@ -21,56 +21,19 @@ def build_latest_state(
     current_cash: float,
     current_shares: float,
     initial_cash: float,
-    state_lookback: int = 100,
 ):
     latest_scaled = apply_standardizer(latest_mtf_raw, feature_cols, feature_mean, feature_std)
-    start_idx = max(0, len(latest_scaled) - state_lookback)
-    window_scaled = latest_scaled.iloc[start_idx:].copy()
-    window_raw = latest_mtf_raw.iloc[start_idx:].copy()
-    pd_valid_cols = [c for c in ["w1_pd_valid", "d1_pd_valid", "h4_pd_valid", "h1_pd_valid"] if c in window_raw.columns]
-    if pd_valid_cols:
-        valid_mask = (window_raw[pd_valid_cols].fillna(0).astype(int) > 0).all(axis=1)
-        valid_window_scaled = window_scaled.loc[valid_mask]
-        valid_window_raw = window_raw.loc[valid_mask]
-        if not valid_window_scaled.empty:
-            window_scaled = valid_window_scaled
-            window_raw = valid_window_raw
-    latest_row_scaled = window_scaled.iloc[-1]
-    latest_row_raw = window_raw.iloc[-1]
-    history = window_scaled[feature_cols].values.astype(np.float32)
-    if history.shape[0] < state_lookback:
-        pad = np.repeat(history[:1], state_lookback - history.shape[0], axis=0) if history.shape[0] > 0 else np.zeros((state_lookback, len(feature_cols)), dtype=np.float32)
-        history = np.vstack([pad, history]) if history.shape[0] > 0 else pad
+    latest_row_scaled = latest_scaled.iloc[-1]
+    latest_row_raw = latest_mtf_raw.iloc[-1]
+    features = latest_row_scaled[feature_cols].values.astype(np.float32)
     price = float(latest_row_raw["close"])
     portfolio_value = current_cash + current_shares * price
     cash_ratio = current_cash / max(portfolio_value, 1e-8)
     position_ratio = (current_shares * price) / max(portfolio_value, 1e-8)
     unrealized_pnl_ratio = portfolio_value / max(initial_cash, 1e-8) - 1.0
-    rr_features = np.array([
-        float(latest_row_raw.get("h1_rr_risk_pct", 0.0) or 0.0),
-        float(latest_row_raw.get("h1_rr_reward_pct", 0.0) or 0.0),
-        float(latest_row_raw.get("h1_rr_ratio", 0.0) or 0.0),
-        float(latest_row_raw.get("h1_rr_valid", 0.0) or 0.0),
-    ], dtype=np.float32)
-    portfolio_features = np.array([cash_ratio, position_ratio, unrealized_pnl_ratio, *rr_features], dtype=np.float32)
-    state = np.concatenate([history.reshape(-1), portfolio_features])
+    portfolio_features = np.array([cash_ratio, position_ratio, unrealized_pnl_ratio], dtype=np.float32)
+    state = np.concatenate([features, portfolio_features])
     return state, latest_row_raw, price, portfolio_value
-
-
-def _align_state_to_model(agent, state: np.ndarray) -> np.ndarray:
-    expected_dim = None
-    try:
-        first_layer = getattr(agent.policy_net, "net")[0]
-        expected_dim = int(first_layer.in_features)
-    except Exception:
-        expected_dim = None
-    if not expected_dim or state.shape[0] == expected_dim:
-        return state
-    if state.shape[0] > expected_dim:
-        return state[:expected_dim]
-    padded = np.zeros(expected_dim, dtype=state.dtype)
-    padded[:state.shape[0]] = state
-    return padded
 
 
 def calculate_risk_reward_plan(
@@ -87,17 +50,20 @@ def calculate_risk_reward_plan(
     if not is_long_entry:
         return {"risk_reward_valid": False, "risk_reward_note": "No new long entry suggested."}
 
+    h1_atr = latest_row.get("h1_atr", np.nan)
     h4_atr = latest_row.get("h4_atr", np.nan)
+    atr_value = h1_atr if not (pd.isna(h1_atr) or h1_atr <= 0) else h4_atr
+    if pd.isna(atr_value) or atr_value <= 0:
+        return {"risk_reward_valid": False, "entry_price": entry_price, "risk_reward_note": "ATR unavailable."}
+
+    atr_stop = entry_price - atr_multiplier * float(atr_value)
     stop_candidates = []
-    for key in ["h4_lib_swing_level", "h4_last_swing_low", "h1_last_swing_low"]:
+    if atr_stop < entry_price:
+        stop_candidates.append(atr_stop)
+    for key in ["h1_last_swing_low", "h4_last_swing_low"]:
         val = latest_row.get(key, np.nan)
         if not pd.isna(val) and float(val) < entry_price:
             stop_candidates.append(float(val) * (1 - swing_buffer_pct))
-    h4_atr = latest_row.get("h4_atr", np.nan)
-    if not pd.isna(h4_atr) and h4_atr > 0:
-        atr_stop = entry_price - atr_multiplier * float(h4_atr)
-        if atr_stop < entry_price:
-            stop_candidates.append(atr_stop)
 
     if not stop_candidates:
         return {"risk_reward_valid": False, "entry_price": entry_price, "risk_reward_note": "No valid stop-loss."}
@@ -107,20 +73,22 @@ def calculate_risk_reward_plan(
     if risk_per_share <= 0:
         return {"risk_reward_valid": False, "entry_price": entry_price, "stop_loss_price": stop_loss_price, "risk_reward_note": "Invalid stop-loss."}
 
+    rr_take_profit = entry_price + risk_per_share * target_rr
+    take_profit_price = rr_take_profit
+    take_profit_basis = f"Target RR {target_rr:.1f}x"
+
     resistance_candidates = []
-    for key in ["w1_lib_swing_level", "w1_last_swing_high", "d1_last_swing_high", "h4_last_swing_high", "h1_last_swing_high"]:
+    for key in ["h1_last_swing_high", "h4_last_swing_high", "d1_last_swing_high"]:
         val = latest_row.get(key, np.nan)
         if not pd.isna(val) and float(val) > entry_price:
             resistance_candidates.append(float(val))
 
-    take_profit_price = entry_price + risk_per_share * target_rr
-    take_profit_basis = f"Target RR {target_rr:.1f}x"
     if resistance_candidates:
         nearest = min(resistance_candidates)
         structure_rr = (nearest - entry_price) / risk_per_share
-        if structure_rr >= 1.0:
+        if structure_rr >= 1.2:
             take_profit_price = nearest
-            take_profit_basis = "W1 swing high / resistance"
+            take_profit_basis = "Nearest SMC swing high / resistance"
 
     reward_per_share = take_profit_price - entry_price
     return {
@@ -131,10 +99,8 @@ def calculate_risk_reward_plan(
         "risk_per_share": risk_per_share,
         "reward_per_share": reward_per_share,
         "risk_reward_ratio": reward_per_share / risk_per_share,
-        "h4_stop_loss_price": stop_loss_price,
-        "w1_take_profit_price": take_profit_price,
         "take_profit_basis": take_profit_basis,
-        "atr_used": float(h4_atr) if not pd.isna(h4_atr) else np.nan,
+        "atr_used": float(atr_value),
         "risk_reward_note": "Long entry risk plan generated.",
     }
 
@@ -152,9 +118,7 @@ def recommend_strategy_v2(
     state, latest_row, price, portfolio_value = build_latest_state(
         latest_mtf_raw, feature_cols, feature_mean, feature_std,
         current_cash, current_shares, cfg.initial_cash,
-        getattr(cfg, "state_lookback", 100),
     )
-    state = _align_state_to_model(agent, state)
     q_values = agent.get_q_values(state)
     best_action = int(np.argmax(q_values))
     target_ratio = ACTION_POSITION_RATIOS[best_action]

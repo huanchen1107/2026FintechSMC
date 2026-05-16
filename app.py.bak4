@@ -1,0 +1,1002 @@
+import streamlit as st
+import pandas as pd
+import yfinance as yf
+import plotly.graph_objects as plotly_go
+from config import Config, ACTION_NAMES
+from train import run_training_pipeline
+from train_v2 import run_training_pipeline_v2, run_evaluation_pipeline_v2
+from recommend import recommend_strategy
+from recommend_v2 import recommend_strategy_v2
+from utils.data_utils import FEATURE_COLUMNS, prepare_data_for_chart
+from utils.data_utils_v2 import FEATURE_COLUMNS as FEATURE_COLUMNS_V2
+from ai_comment import generate_ai_comment
+from utils.ai_comment_cache import get_ai_comment, save_ai_comment
+from utils.model_registry import list_models, load_model_by_id
+from utils.trade_pairs import reconstruct_trade_pairs, pairs_to_dataframe, append_trade_review, ensure_reviews_file
+from lightweight_charts.widgets import StreamlitChart
+
+# 設定頁面配置 (必須是第一個 Streamlit 指令)
+st.set_page_config(page_title="SMC × DRL Trading Platform", layout="wide")
+
+# 初始化設定
+cfg = Config()
+
+def load_data_raw(ticker, start_date, end_date):
+    try:
+        df = yf.download(ticker, start=str(start_date), end=str(end_date), interval="1h")
+        if df.empty:
+            return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(1)
+        df = df.reset_index()
+        rename_map = {"Date": "date", "Datetime": "date", "Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"}
+        df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns}, inplace=True)
+        if pd.api.types.is_datetime64_any_dtype(df['date']):
+            if df['date'].dt.tz is not None:
+                df['date'] = df['date'].dt.tz_convert('Asia/Taipei').dt.tz_localize(None)
+            else:
+                df['date'] = df['date'].dt.tz_localize('UTC').dt.tz_convert('Asia/Taipei').dt.tz_localize(None)
+        return df
+    except Exception as e:
+        st.error(f"Failed to fetch data: {e}")
+        return None
+
+def process_data_for_chart(raw_df, interval, rolling_window):
+    """Process data with smartmoneyconcepts for chart display."""
+    df = raw_df.loc[:, ~raw_df.columns.duplicated()].copy()
+    df.set_index("date", inplace=True)
+    resample_rules = {"1h": None, "4h": "4h", "1d": "D", "1wk": "W-MON"}
+    rule = resample_rules.get(interval)
+    if rule:
+        df = df.resample(rule).agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}).dropna()
+    df.reset_index(inplace=True)
+    if len(df) < rolling_window:
+        st.warning(f"Current data count ({len(df)}) is less than rolling window ({rolling_window})")
+    df = prepare_data_for_chart(df, rolling_window=rolling_window)
+    return df
+
+def compute_recommendation(ret, cfg):
+    agent = ret["agent"]
+    mtf_df = ret["mtf_df"]
+    feature_mean = ret["feature_mean"]
+    feature_std = ret["feature_std"]
+    if ret.get("is_v2"):
+        return recommend_strategy_v2(
+            agent=agent, latest_mtf_raw=mtf_df, cfg=cfg,
+            feature_cols=FEATURE_COLUMNS_V2, feature_mean=feature_mean, feature_std=feature_std
+        )
+    else:
+        return recommend_strategy(
+            agent=agent, latest_mtf_raw=mtf_df, cfg=cfg,
+            feature_cols=FEATURE_COLUMNS, feature_mean=feature_mean, feature_std=feature_std
+        )
+
+
+def set_current_model_context(ret):
+    model_record = ret.get("model_record") or {}
+    model_id = model_record.get("model_id") or ret.get("model_path")
+    st.session_state["current_model_id"] = model_id
+    st.session_state["current_model_record"] = model_record
+    if ret.get("recommendation"):
+        st.session_state["recommendation"] = ret["recommendation"]
+    else:
+        try:
+            st.session_state["recommendation"] = compute_recommendation(ret, cfg)
+        except Exception:
+            pass
+    if ret.get("metrics"):
+        st.session_state["model_metrics"] = ret["metrics"]
+
+# ── 圖表渲染 Fragment（切換時區不會觸發整頁 rerun）──
+@st.fragment
+def render_chart():
+    """圖表 Fragment：內部自行讀取資料並建立 UI，確保 fragment rerun 時正常更新。"""
+    raw_df = st.session_state.get("raw_df")
+    if raw_df is None:
+        st.info("Waiting for data to render chart...")
+        return
+
+    interval_map = {"W1": "1wk", "D1": "1d", "H4": "4h", "H1": "1h"}
+    
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        chart_tf = st.selectbox("Chart Timeframe", list(interval_map.keys()), index=2, key="chart_tf")
+    with col2:
+        rec = st.session_state.get("recommendation", {})
+        snap = rec.get("mtf_snapshot", {}) if rec else {}
+        st.caption("Step 1: DQN Model Selection")
+        show_old_levels = st.checkbox("Overlay Old High / Low", value=True, key="show_old_levels")
+        show_ob = st.checkbox("Overlay Order Blocks", value=True, key="show_ob_levels")
+        show_fvg = st.checkbox("Overlay Fair Value Gaps", value=True, key="show_fvg_levels")
+        show_liq = st.checkbox("Overlay Liquidity Sweeps", value=True, key="show_liq_levels")
+        rr_options = []
+        if "rr_details" in snap:
+            rr_options = [tf.upper() for tf in ["w1", "d1", "h4", "h1"] if pd.notna(snap["rr_details"][tf.lower()]["entry"])]
+        show_rr = st.multiselect("Show MTF RRR Levels", rr_options, default=[], key="show_rr_levels")
+    
+    col3, col4 = st.columns([1, 2])
+    with col3:
+        chart_engine = st.selectbox("Chart Engine", ["Plotly (SMC Focus)", "TradingView (Performance)"], index=1, key="chart_engine")
+    with col4:
+        st.write("") # placeholder
+
+    interval_option = interval_map[chart_tf]
+
+    with st.spinner(f"Aggregating {chart_tf} timeframe and calculating SMC features..."):
+        try:
+            df = process_data_for_chart(raw_df, interval_option, cfg.rolling_window)
+        except Exception as e:
+            st.error(f"Data conversion or SMC calculation failed: {e}")
+            return
+
+    if chart_engine == "Plotly (SMC Focus)":
+        render_plotly_chart(df, rec, snap, show_rr, show_old_levels, show_ob, show_fvg, show_liq)
+    else:
+        render_tradingview_chart(df, rec, snap, show_old_levels, show_ob, show_fvg, show_liq)
+
+
+def render_plotly_chart(df, rec, snap, show_rr, show_old_levels=True, show_ob=True, show_fvg=True, show_liq=True):
+    fig = plotly_go.Figure()
+    if df['date'].dtype == 'O': # Object/String
+        date_col = df['date']
+    else:
+        # Check if interval is intraday
+        if len(df) > 1 and (df['date'].iloc[1] - df['date'].iloc[0]).total_seconds() < 86400:
+            date_col = df['date'].dt.strftime('%Y-%m-%d %H:%M')
+        else:
+            date_col = df['date'].dt.strftime('%Y-%m-%d')
+
+    fig.add_trace(plotly_go.Candlestick(x=date_col, open=df['open'], high=df['high'], low=df['low'], close=df['close'], name='Candlesticks'))
+
+    # Old Highs / Old Lows
+    if show_old_levels and 'old_high' in df.columns:
+        fig.add_trace(plotly_go.Scatter(x=date_col, y=df['old_high'], mode='lines', name='Old High (BSL)', line=dict(color='red', width=1, dash='dash')))
+        fig.add_trace(plotly_go.Scatter(x=date_col, y=df['old_low'], mode='lines', name='Old Low (SSL)', line=dict(color='green', width=1, dash='dash')))
+
+    # Order Block
+    if show_ob and "ob" in df.columns:
+        ob_pos_x, ob_pos_y, ob_neg_x, ob_neg_y = [], [], [], []
+        for i, row in df[df['ob'] != 0].iterrows():
+            x0 = date_col.iloc[i]
+            x1 = date_col.iloc[-1] if i == len(df)-1 else date_col.iloc[min(i+10, len(df)-1)]
+            y0 = row.get('ob_bottom', row['low'])
+            y1 = row.get('ob_top', row['high'])
+            if row['ob'] < 0:
+                ob_neg_x.extend([x0, x0, x1, x1, None])
+                ob_neg_y.extend([y0, y1, y1, y0, None])
+            else:
+                ob_pos_x.extend([x0, x0, x1, x1, None])
+                ob_pos_y.extend([y0, y1, y1, y0, None])
+        if ob_pos_x:
+            fig.add_trace(plotly_go.Scatter(x=ob_pos_x, y=ob_pos_y, fill='toself', fillcolor='rgba(0, 255, 0, 0.2)', mode='lines', line=dict(width=0), name='+ OB (Bullish)'))
+        if ob_neg_x:
+            fig.add_trace(plotly_go.Scatter(x=ob_neg_x, y=ob_neg_y, fill='toself', fillcolor='rgba(255, 0, 0, 0.2)', mode='lines', line=dict(width=0), name='- OB (Bearish)'))
+
+    # FVG
+    if show_fvg and "fvg" in df.columns:
+        fvg_pos_x, fvg_pos_y, fvg_neg_x, fvg_neg_y = [], [], [], []
+        for i, row in df[df['fvg'] != 0].iterrows():
+            x0 = date_col.iloc[i]
+            x1 = date_col.iloc[-1] if i == len(df)-1 else date_col.iloc[min(i+3, len(df)-1)]
+            y0 = row.get('fvg_bottom', row['low'])
+            y1 = row.get('fvg_top', row['high'])
+            if row['fvg'] < 0:
+                fvg_neg_x.extend([x0, x0, x1, x1, None])
+                fvg_neg_y.extend([y0, y1, y1, y0, None])
+            else:
+                fvg_pos_x.extend([x0, x0, x1, x1, None])
+                fvg_pos_y.extend([y0, y1, y1, y0, None])
+        if fvg_pos_x:
+            fig.add_trace(plotly_go.Scatter(x=fvg_pos_x, y=fvg_pos_y, fill='toself', fillcolor='rgba(0, 191, 255, 0.2)', mode='lines', line=dict(width=0), name='+ FVG (Bullish Gap)'))
+        if fvg_neg_x:
+            fig.add_trace(plotly_go.Scatter(x=fvg_neg_x, y=fvg_neg_y, fill='toself', fillcolor='rgba(255, 165, 0, 0.2)', mode='lines', line=dict(width=0), name='- FVG (Bearish Gap)'))
+
+    # Liquidity
+    if show_liq and "liq_swept" in df.columns:
+        liq_df = df[df['liq_swept'] != 0]
+        if not liq_df.empty:
+            fig.add_trace(plotly_go.Scatter(x=date_col.iloc[liq_df.index], y=liq_df['high'] * 1.01, mode='markers', name='Liquidity Swept', marker=dict(symbol='x', color='purple', size=8)))
+
+    # ── DRL 測試集交易標記 ──
+    ret_data = st.session_state.get("model_ret", {})
+    bt_data = ret_data.get("test_backtest", {}) if ret_data else {}
+    bt_trades_df = bt_data.get("trades_df") if bt_data else None
+
+    if bt_trades_df is not None and not bt_trades_df.empty:
+        def _nearest_candle(trade_dt):
+            t = pd.Timestamp(trade_dt)
+            diffs = (df['date'] - t).abs()
+            idx = diffs.idxmin()
+            return date_col.iloc[idx], df.loc[idx, 'low'], df.loc[idx, 'high']
+
+        buy_rows = bt_trades_df[bt_trades_df['type'] == 'BUY']
+        if not buy_rows.empty:
+            bx, by, bc = [], [], []
+            for _, t in buy_rows.iterrows():
+                ds, low, _ = _nearest_candle(t['datetime'])
+                bx.append(ds); by.append(low * 0.995)
+                bc.append([str(t['datetime'])[:16], f"{t['price']:,.2f}", f"{t['value']:,.0f}", f"{t['cost']:,.2f}"])
+            fig.add_trace(plotly_go.Scatter(
+                x=bx, y=by, mode='markers+text', name='BUY Trade',
+                marker=dict(symbol='circle', color='#00E676', size=9, line=dict(color='white', width=1)),
+                text=['BUY'] * len(bx), textposition='top center',
+                customdata=bc,
+                hovertemplate='<b>BUY</b><br>Time: %{customdata[0]}<br>Price: %{customdata[1]}<br>Value: %{customdata[2]}<br>Fee: %{customdata[3]}<extra></extra>',
+            ))
+
+        sell_rows = bt_trades_df[bt_trades_df['type'] == 'SELL']
+        if not sell_rows.empty:
+            sx, sy, sc = [], [], []
+            for _, t in sell_rows.iterrows():
+                ds, _, high = _nearest_candle(t['datetime'])
+                sx.append(ds); sy.append(high * 1.005)
+                sc.append([str(t['datetime'])[:16], f"{t['price']:,.2f}", f"{t['value']:,.0f}", f"{t['cost']:,.2f}"])
+            fig.add_trace(plotly_go.Scatter(
+                x=sx, y=sy, mode='markers+text', name='SELL Trade',
+                marker=dict(symbol='circle', color='#FF5252', size=9, line=dict(color='white', width=1)),
+                text=['SELL'] * len(sx), textposition='bottom center',
+                customdata=sc,
+                hovertemplate='<b>SELL</b><br>Time: %{customdata[0]}<br>Price: %{customdata[1]}<br>Value: %{customdata[2]}<br>Fee: %{customdata[3]}<extra></extra>',
+            ))
+
+    # ── Draw MTF RRR Lines ──
+    if show_rr and rec and "rr_details" in snap:
+        last_date = date_col.iloc[-1]
+        start_idx = max(0, len(df) - 30)
+        start_date = date_col.iloc[start_idx]
+        for tf_upper in show_rr:
+            tf = tf_upper.lower()
+            tf_rr = snap["rr_details"][tf]
+            entry = tf_rr["entry"]
+            sl = tf_rr["stop_loss"]
+            tp = tf_rr["take_profit"]
+            fig.add_trace(plotly_go.Scatter(x=[start_date, last_date], y=[entry, entry], mode='lines+text', name=f'{tf_upper} Entry', line=dict(color="white", width=2, dash="dashdot"), text=[f"{tf_upper} Entry: {entry:,.2f}", ""], textposition="top right", textfont=dict(color="white", size=10)))
+            fig.add_trace(plotly_go.Scatter(x=[start_date, last_date], y=[sl, sl], mode='lines+text', name=f'{tf_upper} SL', line=dict(color="#FF5252", width=2, dash="dashdot"), text=[f"{tf_upper} SL: {sl:,.2f}", ""], textposition="bottom right", textfont=dict(color="#FF5252", size=10)))
+            fig.add_trace(plotly_go.Scatter(x=[start_date, last_date], y=[tp, tp], mode='lines+text', name=f'{tf_upper} TP', line=dict(color="#00E676", width=2, dash="dashdot"), text=[f"{tf_upper} TP: {tp:,.2f}", ""], textposition="top right", textfont=dict(color="#00E676", size=10)))
+
+    fig.update_layout(height=550, margin=dict(l=0, r=0, t=30, b=0), xaxis_rangeslider_visible=False, xaxis_type="category", title="Plotly SMC Price Action")
+    fig.update_xaxes(type="category", nticks=10)
+    st.plotly_chart(fig, use_container_width=True)
+
+
+
+
+
+
+
+
+
+
+
+def render_tradingview_chart(df, rec, snap, show_old_levels=True, show_ob=True, show_fvg=True, show_liq=True):
+    st.subheader("TradingView Advanced Dashboard")
+    
+    # ── Advanced Chart Settings ──
+    col_set1, col_set2, col_set3 = st.columns([1, 1, 2])
+    with col_set1:
+        chart_theme = st.selectbox("Theme", ["light", "dark"], index=0, key="tv_theme")
+    with col_set2:
+        chart_height = st.slider("Chart Height", 400, 1000, 600, step=50, key="tv_height")
+    with col_set3:
+        show_watermark = st.checkbox("Enable Watermark", value=True, key="tv_watermark")
+
+    with st.expander("🛠️ Drawing Tools Help & Hotkeys"):
+        st.markdown("""
+        - **Trendline**: `Alt + T`
+        - **Horizontal Line**: `Alt + H`
+        - **Ray**: `Alt + R`
+        - **Undo**: `Ctrl/Cmd + Z`
+        - **Delete Selected**: `Backspace` or `Delete`
+        - **Note**: If the UI icons on the left are unresponsive, please use the **Hotkeys** above while the chart is focused.
+        """)
+
+    try:
+        # 1. Prepare Data
+        chart_df = df.copy()
+        chart_df = chart_df.loc[:, ~chart_df.columns.duplicated()].copy()
+        
+        rename_map = {'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume', 'date': 'time'}
+        chart_df = chart_df.rename(columns={k: v for k, v in rename_map.items() if k in chart_df.columns})
+        
+        chart_df['time'] = pd.to_datetime(chart_df['time'])
+        if chart_df['time'].dt.tz is not None:
+            chart_df['time'] = chart_df['time'].dt.tz_localize(None)
+        
+        chart_df = chart_df.sort_values('time').drop_duplicates(subset=['time']).reset_index(drop=True)
+        
+        is_intraday = False
+        if len(chart_df) > 1:
+            if (chart_df['time'].iloc[1] - chart_df['time'].iloc[0]).total_seconds() < 86400:
+                is_intraday = True
+        
+        time_format = '%Y-%m-%d %H:%M:%S' if is_intraday else '%Y-%m-%d'
+        chart_df['time'] = chart_df['time'].dt.strftime(time_format)
+        
+        for col in ['open', 'high', 'low', 'close']:
+            chart_df[col] = pd.to_numeric(chart_df[col], errors='coerce')
+        chart_df = chart_df.dropna(subset=['open', 'high', 'low', 'close'])
+
+        if 'ema20' not in chart_df.columns:
+            chart_df['ema20'] = chart_df['close'].ewm(span=20, adjust=False).mean()
+        if 'ema50' not in chart_df.columns:
+            chart_df['ema50'] = chart_df['close'].ewm(span=50, adjust=False).mean()
+
+        # 2. Initialize Advanced Chart
+        chart = StreamlitChart(width=1000, height=chart_height, toolbox=True)
+        
+        # Configuration
+        bg_color = '#131722' if chart_theme == 'dark' else '#ffffff'
+        text_color = '#d1d4dc' if chart_theme == 'dark' else '#131722'
+        grid_color = '#1f222d' if chart_theme == 'dark' else '#f0f3fa'
+        
+        chart.layout(background_color=bg_color, text_color=text_color, font_size=12)
+        chart.grid(vert_enabled=True, horz_enabled=True, color=grid_color)
+        chart.legend(visible=True, font_size=14)
+        
+        if show_watermark:
+            ticker_name = st.session_state.get("ticker", "STOCK")
+            chart.watermark(ticker_name, color='rgba(180, 180, 255, 0.1)')
+
+        # Set Data
+        plot_df = chart_df[['time', 'open', 'high', 'low', 'close', 'volume']].copy()
+        chart.set(plot_df)
+        
+        # Add EMA lines
+        line20 = chart.create_line(name='EMA 20', color='rgba(41, 98, 255, 0.6)')
+        line20.set(chart_df[['time', 'ema20']].rename(columns={'ema20': 'EMA 20'}))
+        
+        line50 = chart.create_line(name='EMA 50', color='rgba(255, 152, 0, 0.6)')
+        line50.set(chart_df[['time', 'ema50']].rename(columns={'ema50': 'EMA 50'}))
+
+        if show_old_levels and 'old_high' in chart_df.columns and 'old_low' in chart_df.columns:
+            old_high = chart.create_line(name='Old High', color='rgba(255, 82, 82, 0.55)')
+            old_high.set(chart_df[['time', 'old_high']].rename(columns={'old_high': 'Old High'}))
+            old_low = chart.create_line(name='Old Low', color='rgba(0, 230, 118, 0.55)')
+            old_low.set(chart_df[['time', 'old_low']].rename(columns={'old_low': 'Old Low'}))
+
+        
+        # 3. Add Dynamic Markers
+        ret_data = st.session_state.get("model_ret", {})
+        bt_trades_df = ret_data.get("test_backtest", {}).get("trades_df") if ret_data else None
+        
+        if bt_trades_df is not None and not bt_trades_df.empty:
+            orig_times = pd.to_datetime(df['date']).dt.tz_localize(None)
+            for _, t in bt_trades_df.iterrows():
+                trade_t = pd.Timestamp(t['datetime']).tz_localize(None)
+                idx = (orig_times - trade_t).abs().idxmin()
+                match_dt = orig_times.iloc[idx]
+                actual_time_str = match_dt.strftime(time_format)
+                
+                if t['type'] == 'BUY':
+                    chart.marker(time=actual_time_str, position='belowBar', color='#22ab94', shape='circle', text='BUY')
+                else:
+                    chart.marker(time=actual_time_str, position='aboveBar', color='#f7525f', shape='circle', text='SELL')
+
+        if show_ob and 'ob' in chart_df.columns:
+            for i, row in chart_df[chart_df['ob'] != 0].tail(20).iterrows():
+                color = "#22ab94" if row['ob'] > 0 else "#f7525f"
+                chart.marker(time=row['time'], position='belowBar' if row['ob'] > 0 else 'aboveBar', color=color, shape='square', text="OB")
+
+        if show_fvg and 'fvg' in chart_df.columns:
+            for i, row in chart_df[chart_df['fvg'] != 0].tail(10).iterrows():
+                color = "#2962ff" if row['fvg'] > 0 else "#ff9800"
+                chart.marker(time=row['time'], position='belowBar' if row['fvg'] > 0 else 'aboveBar', color=color, shape='circle', text="FVG")
+
+        if show_liq and 'liq_swept' in chart_df.columns:
+            for i, row in chart_df[chart_df['liq_swept'] != 0].tail(20).iterrows():
+                color = "#9c27b0"
+                chart.marker(time=row['time'], position='aboveBar', color=color, shape='diamond', text="LIQ")
+
+        chart.load()
+    except Exception as e:
+        st.error(f"TradingView Chart Error: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+
+
+
+
+def render_trade_analysis():
+    st.subheader("Step 4: Review Each Trading Pair")
+
+    ret = st.session_state.get("model_ret")
+    raw_df = st.session_state.get("raw_df")
+    if not ret or raw_df is None:
+        st.info("請先完成模型訓練以進行交易分析。")
+        return
+
+    trades_df = ret.get("test_backtest", {}).get("trades_df")
+    if trades_df is None or trades_df.empty:
+        st.warning("無交易紀錄。")
+        return
+
+    pairs = reconstruct_trade_pairs(trades_df, ticker=st.session_state.get("ticker", ""))
+    pairs_df = pairs_to_dataframe(pairs)
+    if pairs_df.empty:
+        st.warning("查無完成的交易對 (BUY -> SELL)。")
+        return
+
+    reviews_path = Config().outputs_dir / "trade_reviews.csv"
+    ensure_reviews_file(reviews_path)
+
+    st.session_state.setdefault("selected_trade_pair_id", int(pairs_df.iloc[0]["pair_id"]))
+    pair_options = pairs_df[["pair_id", "buy_trade_id", "sell_trade_id", "buy_time", "profit_pct", "pnl"]].copy()
+    pair_options["label"] = pair_options.apply(
+        lambda r: f"#{int(r['pair_id'])} | BUY {r['buy_trade_id']} -> SELL {r['sell_trade_id']} | {pd.Timestamp(r['buy_time']).strftime('%Y-%m-%d %H:%M')} | {r['profit_pct']*100:+.2f}%",
+        axis=1,
+    )
+
+    col_chart, col_panel = st.columns([3, 1])
+    with col_panel:
+        st.markdown("#### Trade Pairs")
+        label_list = pair_options["label"].tolist()
+        default_pair_id = int(st.session_state.get("selected_trade_pair_id", int(pairs_df.iloc[0]["pair_id"])))
+        default_label = pair_options.loc[pair_options["pair_id"] == default_pair_id, "label"]
+        default_index = label_list.index(default_label.iloc[0]) if not default_label.empty else 0
+        selected_label = st.selectbox(
+            "Select Pair",
+            label_list,
+            index=default_index,
+        )
+        selected_pair_id = int(selected_label.split(" | ")[0][1:])
+        st.session_state["selected_trade_pair_id"] = selected_pair_id
+        pair_row = pairs_df[pairs_df["pair_id"] == selected_pair_id].iloc[0]
+
+        st.metric("Profit %", f"{pair_row['profit_pct']*100:+.2f}%")
+        st.metric("PnL", f"{pair_row['pnl']:+.2f}")
+        st.write(f"**Buy Reason:** {pair_row['buy_reason'] or 'N/A'}")
+        st.write(f"**Sell Reason:** {pair_row['sell_reason'] or 'N/A'}")
+
+        review_state = st.radio("Was this trade correct?", ["Correct", "Wrong", "Unclear"], horizontal=True, key=f"review_state_{selected_pair_id}")
+        review_note = st.text_area("Review Note", key=f"review_note_{selected_pair_id}")
+        if st.button("Save Review", key=f"save_review_{selected_pair_id}", use_container_width=True):
+            append_trade_review(reviews_path, {
+                "pair_id": int(pair_row["pair_id"]),
+                "ticker": pair_row.get("ticker", st.session_state.get("ticker", "")),
+                "buy_trade_id": str(pair_row.get("buy_trade_id", "")),
+                "sell_trade_id": str(pair_row.get("sell_trade_id", "")),
+                "buy_time": str(pd.Timestamp(pair_row["buy_time"])),
+                "sell_time": str(pd.Timestamp(pair_row["sell_time"])),
+                "buy_price": float(pair_row["buy_price"]),
+                "sell_price": float(pair_row["sell_price"]),
+                "profit_pct": float(pair_row["profit_pct"]),
+                "pnl": float(pair_row["pnl"]),
+                "buy_reason": pair_row.get("buy_reason", ""),
+                "sell_reason": pair_row.get("sell_reason", ""),
+                "is_correct": review_state,
+                "review_note": review_note,
+            })
+            st.success("Review saved.")
+
+    with col_chart:
+        selected_pair = pairs_df[pairs_df["pair_id"] == st.session_state["selected_trade_pair_id"]].iloc[0]
+        padding = max((pd.Timestamp(selected_pair["sell_time"]) - pd.Timestamp(selected_pair["buy_time"])) * 0.5, pd.Timedelta(hours=12))
+        t_start = pd.Timestamp(selected_pair["buy_time"]) - padding
+        t_end = pd.Timestamp(selected_pair["sell_time"]) + padding
+        chart_data = raw_df.loc[(raw_df["date"] >= t_start) & (raw_df["date"] <= t_end)].copy()
+        if chart_data.empty:
+            st.error("無法取得該時段的圖表資料。")
+            return
+
+        fig = plotly_go.Figure()
+        fig.add_trace(plotly_go.Candlestick(
+            x=chart_data["date"],
+            open=chart_data["open"] if "open" in chart_data.columns else chart_data["Open"],
+            high=chart_data["high"] if "high" in chart_data.columns else chart_data["High"],
+            low=chart_data["low"] if "low" in chart_data.columns else chart_data["Low"],
+            close=chart_data["close"] if "close" in chart_data.columns else chart_data["Close"],
+            name="Price",
+            showlegend=False,
+        ))
+        fig.add_trace(plotly_go.Scatter(
+            x=[pd.Timestamp(selected_pair["buy_time"])],
+            y=[float(selected_pair["buy_price"])],
+            mode="markers+text",
+            marker=dict(symbol="circle", size=12, color="#00E676", line=dict(width=2, color="white")),
+            text=["BUY"], textposition="top center", name="BUY",
+        ))
+        fig.add_trace(plotly_go.Scatter(
+            x=[pd.Timestamp(selected_pair["sell_time"])],
+            y=[float(selected_pair["sell_price"])],
+            mode="markers+text",
+            marker=dict(symbol="circle", size=12, color="#FF5252", line=dict(width=2, color="white")),
+            text=["SELL"], textposition="bottom center", name="SELL",
+        ))
+        fig.add_trace(plotly_go.Scatter(
+            x=[pd.Timestamp(selected_pair["buy_time"]), pd.Timestamp(selected_pair["sell_time"])],
+            y=[float(selected_pair["buy_price"]), float(selected_pair["sell_price"])],
+            mode="lines",
+            line=dict(color="white", width=2, dash="dot"),
+            showlegend=False,
+        ))
+        fig.update_layout(
+            height=650,
+            margin=dict(l=0, r=0, t=30, b=0),
+            template="plotly_dark",
+            xaxis_rangeslider_visible=False,
+            hovermode="x unified",
+            title=f"Trade #{int(selected_pair['pair_id'])} Review",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
+def _render_log_html(log_messages):
+    """共用的 log HTML 渲染函式。"""
+    display_text = "\n".join(log_messages)
+    return f"""
+    <div style="background-color: #F8F9FA; color: #1A1A2E; padding: 12px 16px; border-radius: 8px; font-family: 'SF Mono', Consolas, monospace; font-size: 13px; height: 280px; display: flex; flex-direction: column-reverse; overflow-y: auto; border: 1px solid #E0E0E0;">
+        <div style="white-space: pre-wrap;">{display_text}</div>
+    </div>
+    """
+
+
+def main():
+    if "raw_df" not in st.session_state and "ticker" not in st.session_state:
+        st.session_state["auto_fetch"] = True
+    # ── Header ──
+    st.markdown("""
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
+    </style>
+    <div style="padding: 1.2rem 0 0.6rem 0; border-bottom: 2px solid #E0E0E0; margin-bottom: 1.5rem; text-align: center;">
+        
+        <div style="position: absolute; top: 1rem; right: 1rem;">
+            <a href="https://github.com/huanchen1107/2026FintechSMC" target="_blank">
+                <img src="https://img.shields.io/badge/GitHub-View%20Source-181717?style=for-the-badge&logo=github" alt="GitHub">
+            </a>
+        </div>
+<h1 style="margin: 0; font-size: 3.4rem; font-weight: 700; color: #1A1A2E; font-family: 'Inter', sans-serif;">
+            SMC × DRL Trading Platform
+        </h1>
+        <p style="margin: 0.3rem 0 0 0; font-size: 0.95rem; color: #666; font-family: 'Inter', sans-serif;">
+            Smart Money Concepts × Deep Reinforcement Learning — Multi-Timeframe Analysis & Strategy
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 讓按鈕與輸入欄位垂直對齊
+    st.markdown("""
+    <style>
+    div[data-testid="stHorizontalBlock"] > div:nth-child(4) button,
+    div[data-testid="stHorizontalBlock"] > div:nth-child(5) button {
+        margin-top: 1.65rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    col_input1, col_input2, col_input3, col_btn1, col_btn2 = st.columns([2.5, 1.5, 1.5, 0.7, 1.0])
+    with col_input1:
+        ticker = st.text_input("Ticker (e.g. AAPL, 2330.TW)", value="2330.TW")
+    if ticker and ticker != st.session_state.get("ticker") and ticker.strip() != "":
+        st.session_state["auto_fetch"] = True
+    with col_input2:
+        start_date = st.date_input("Start Date", value=pd.to_datetime(st.session_state.get("start_date", cfg.start_date)))
+    with col_input3:
+        end_date = st.date_input("End Date", value=pd.to_datetime(st.session_state.get("end_date", cfg.end_date)))
+    with col_btn1:
+        start_btn = st.button("Fetch & Analyze")
+    with col_btn2:
+        reset_btn = st.button("Reset / Clear")
+
+    if reset_btn:
+        st.session_state.clear()
+        st.rerun()
+
+    # yfinance 1h intraday 資料限制約 730 天
+    date_diff = (pd.to_datetime(end_date) - pd.to_datetime(start_date)).days
+    if date_diff > 730:
+        st.warning(f"Date range is {date_diff} days, exceeding yfinance 1H intraday limit (approx. 730 days). Data might be incomplete.")
+
+    st.divider()
+
+    if "data_range_warning" in st.session_state:
+        st.warning(st.session_state["data_range_warning"])
+
+    # 先預先計算 recommendation，讓 render_chart 可以讀取到 RRR 資料
+    ret = st.session_state.get("model_ret", {})
+    if ret:
+        try:
+            st.session_state["recommendation"] = compute_recommendation(ret, cfg)
+        except Exception:
+            pass
+
+    # ── SMC 圖表（全寬）──
+    st.subheader("SMC Stock Chart")
+    render_chart()
+
+    st.divider()
+
+    # ── Tab 狀態初始化 ──
+    if "active_tab" not in st.session_state:
+        st.session_state["active_tab"] = "training"
+    active_tab = st.session_state["active_tab"]
+
+    # ── Tab 導覽列 ──
+    # 用 #tab-nav-anchor 錨點讓 CSS 只作用在緊接著的 column 容器
+    st.markdown("""
+    <style>
+    #tab-nav-anchor + div[data-testid="stHorizontalBlock"] button {
+        background: transparent !important;
+        border: none !important;
+        border-bottom: 3px solid transparent !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        color: #888 !important;
+        font-weight: 500 !important;
+        font-size: 0.95rem !important;
+        padding: 0.5rem 1.2rem !important;
+        transition: color 0.15s, border-color 0.15s;
+    }
+    #tab-nav-anchor + div[data-testid="stHorizontalBlock"] button[data-testid="stBaseButton-primary"] {
+        color: #1A1A2E !important;
+        border-bottom: 3px solid #1A1A2E !important;
+        font-weight: 600 !important;
+    }
+    #tab-nav-anchor + div[data-testid="stHorizontalBlock"] button[data-testid="stBaseButton-secondary"]:hover {
+        color: #444 !important;
+        border-bottom-color: #BDBDBD !important;
+        background: transparent !important;
+    }
+    </style>
+    <div id="tab-nav-anchor"></div>
+    """, unsafe_allow_html=True)
+
+    tab_col1, tab_col2, tab_col3, tab_col4, _ = st.columns([1.25, 1.25, 1.0, 1.05, 1.95])
+    with tab_col1:
+        if st.button("Step 1: DQN Model Selection", use_container_width=True, key="tab_training",
+                     type="primary" if active_tab == "training" else "secondary"):
+            st.session_state["active_tab"] = "training"
+            st.rerun()
+    with tab_col2:
+        if st.button("Step 2: DQN Analysis Results", use_container_width=True, key="tab_report",
+                     type="primary" if active_tab == "report" else "secondary"):
+            st.session_state["active_tab"] = "report"
+            st.rerun()
+    with tab_col3:
+        if st.button("Step 3: AI Comments", use_container_width=True, key="tab_ai",
+                     type="primary" if active_tab == "ai_comment" else "secondary"):
+            st.session_state["active_tab"] = "ai_comment"
+            st.rerun()
+    with tab_col4:
+        if st.button("Step 4: Trade Review", use_container_width=True, key="tab_analysis",
+                     type="primary" if active_tab == "analysis" else "secondary"):
+            st.session_state["active_tab"] = "analysis"
+            st.rerun()
+
+    st.markdown('<div style="border-top: 2px solid #E0E0E0; margin: -0.5rem 0 1rem 0;"></div>', unsafe_allow_html=True)
+
+    if start_btn or st.session_state.get("auto_fetch", False):
+        st.session_state.pop("auto_fetch", None)
+        if not ticker:
+            st.warning("Please enter a ticker symbol")
+            return
+        st.session_state.pop("model_ret", None)
+        with st.spinner(f"Fetching 1H data from {start_date} to {end_date}..."):
+            raw_df = load_data_raw(ticker, start_date, end_date)
+            if raw_df is not None:
+                actual_start = str(raw_df["date"].min().date())
+                actual_end = str(raw_df["date"].max().date())
+                st.session_state["raw_df"] = raw_df
+                st.session_state["ticker"] = ticker
+                st.session_state["start_date"] = actual_start
+                st.session_state["end_date"] = actual_end
+                if actual_start != str(start_date):
+                    st.session_state["data_range_warning"] = (
+                        f"{ticker} 實際資料從 **{actual_start}** 開始（請求 {start_date}）。"
+                        f"訓練將使用實際可用範圍：{actual_start} ~ {actual_end}。"
+                        f"若股票歷史不足 14 個月，訓練可能仍會失敗（W1 SMA-60 需要 60 週資料）。"
+                    )
+                else:
+                    st.session_state.pop("data_range_warning", None)
+                st.rerun()
+            else:
+                st.error("Failed to fetch stock data, please check ticker or date range.")
+                return
+
+    if "raw_df" not in st.session_state:
+        st.info("Waiting for data and model training...")
+        return
+
+    raw_df = st.session_state["raw_df"]
+    ticker = st.session_state.get("ticker", "UNKNOWN")
+
+    # ── Content ──
+
+    if active_tab == "analysis":
+        render_trade_analysis()
+
+    if active_tab == "training":
+        log_container = st.container(border=True)
+        log_container.subheader("Step 1: DQN Model Selection")
+        log_placeholder = log_container.empty()
+        log_area = log_container.empty()
+        train_btn_placeholder = log_container.empty()
+        model_mode = st.radio("Model Mode", ["Retrain new model", "Use saved model"], horizontal=True, key="model_mode")
+        strategy_mode = st.radio("Trading Strategy", ["DQN Position", "DQN-on-Buy"], horizontal=True, key="training_strategy_mode")
+        cfg.strategy_mode = "dqn_on_buy" if strategy_mode == "DQN-on-Buy" else "dqn_position"
+
+        saved_models = list_models(cfg.outputs_dir)
+        selected_model_id = None
+        if model_mode == "Use saved model":
+            if not saved_models:
+                st.warning("No saved models found yet. Train one first.")
+            else:
+                selected_model_id = st.selectbox(
+                    "Saved Models",
+                    [f"{m['model_id']} | Sharpe {m.get('sharpe', 0):.2f} | Return {m.get('total_return', 0):.2%}" for m in saved_models],
+                    key="saved_model_select",
+                ).split(" | ")[0]
+
+        btn_container = train_btn_placeholder.container()
+        btn_col1, btn_col2 = btn_container.columns(2)
+        with btn_col1:
+            train_btn = st.button(f"DQN + SMC + MTF + RRR ({ticker})", use_container_width=True)
+        with btn_col2:
+            train_v2_btn = st.button(f"V2: DQN + SMC + MTF + RRR (Advanced) ({ticker})", use_container_width=True)
+
+        if (train_btn or train_v2_btn) and model_mode == "Retrain new model":
+            if not ticker or ticker.strip() == "":
+                st.error("Please enter a Ticker (e.g., AAPL or 2330.TW) in the input box before training.")
+                return
+
+            log_status = log_container.empty()
+            log_area = log_container.empty()
+            log_status.info("Starting MTF DQN+SMC training...")
+
+            st.session_state["train_log"] = []
+            def update_log(msg):
+                st.session_state["train_log"].append(msg)
+                log_area.markdown(_render_log_html(st.session_state["train_log"]), unsafe_allow_html=True)
+
+            try:
+                train_cfg = Config()
+                train_cfg.ticker = ticker
+                train_cfg.start_date = st.session_state.get("start_date", cfg.start_date)
+                train_cfg.end_date = st.session_state.get("end_date", cfg.end_date)
+                train_cfg.strategy_mode = cfg.strategy_mode
+                if train_v2_btn:
+                    ret = run_training_pipeline_v2(train_cfg, progress_callback=update_log)
+                else:
+                    ret = run_training_pipeline(train_cfg, progress_callback=update_log)
+                st.session_state["model_ret"] = ret
+                set_current_model_context(ret)
+                st.session_state["current_model_source"] = "trained"
+                metrics = ret["metrics"]
+                final_msg = f"Training Completed! Total Return: {metrics.get('total_return', 0)*100:.1f}% | Sharpe: {metrics.get('sharpe_ratio', 0):.2f}"
+                update_log(final_msg)
+                log_status.success("Training saved successfully!")
+                st.session_state["active_tab"] = "report"
+                st.rerun()
+            except Exception as e:
+                log_status.error(f"Error during training: {e}")
+                import traceback
+                update_log(traceback.format_exc())
+                return
+        elif (train_btn or train_v2_btn) and model_mode == "Use saved model":
+            st.info("Switch to Retrain new model to create a fresh checkpoint.")
+
+        if model_mode == "Use saved model" and selected_model_id:
+            load_btn = st.button("Load Selected Saved Model", use_container_width=True)
+            if load_btn:
+                selected_meta = load_model_by_id(cfg.outputs_dir, selected_model_id)
+                if not selected_meta:
+                    st.error("Selected model not found in registry.")
+                else:
+                    try:
+                        eval_cfg = Config()
+                        eval_cfg.ticker = ticker
+                        eval_cfg.start_date = st.session_state.get("start_date", cfg.start_date)
+                        eval_cfg.end_date = st.session_state.get("end_date", cfg.end_date)
+                        eval_cfg.strategy_mode = selected_meta.get("strategy_mode", cfg.strategy_mode)
+                        st.session_state["train_log"] = [f"Loading saved model: {selected_model_id}"]
+                        log_area.markdown(_render_log_html(st.session_state["train_log"]), unsafe_allow_html=True)
+                        def load_update_log(msg):
+                            st.session_state["train_log"].append(msg)
+                            log_area.markdown(_render_log_html(st.session_state["train_log"]), unsafe_allow_html=True)
+                        ret = run_evaluation_pipeline_v2(
+                            eval_cfg,
+                            selected_meta["path"],
+                            model_record=selected_meta,
+                            progress_callback=load_update_log,
+                        )
+                        st.session_state["model_ret"] = ret
+                        set_current_model_context(ret)
+                        st.session_state["current_model_source"] = "saved"
+                        st.session_state["active_tab"] = "report"
+                        st.rerun()
+                    except Exception as e:
+                        try:
+                            log_status.error(f"Error loading saved model: {e}")
+                        except UnboundLocalError:
+                            st.error(f"Error loading saved model: {e}")
+                        import traceback
+                        err_text = traceback.format_exc()
+                        if "update_log" in locals():
+                            update_log(err_text)
+                        else:
+                            st.text_area("Error details", err_text, height=220)
+                        return
+
+        saved_log = st.session_state.get("train_log", [])
+        if saved_log and not (train_btn or train_v2_btn):
+            log_area = log_container.empty()
+            log_area.markdown(_render_log_html(saved_log), unsafe_allow_html=True)
+        elif not saved_log:
+            log_placeholder.info("Waiting for new training...")
+
+    # ── DRL × SMC Report Tab ──
+    elif active_tab == "report":
+        ret = st.session_state.get("model_ret", {})
+        st.subheader("Step 2: DQN Analysis Results")
+        with st.container(border=True):
+            st.markdown("#### Model Source")
+            report_mode = st.radio(
+                "Model Mode",
+                ["Use current model", "Use saved model", "Retrain new model"],
+                horizontal=True,
+                key="report_model_mode",
+            )
+            saved_models = list_models(cfg.outputs_dir)
+            selected_report_model_id = None
+            if report_mode == "Use saved model":
+                if not saved_models:
+                    st.warning("No saved models found yet. Train one first.")
+                else:
+                    selected_report_model_id = st.selectbox(
+                        "Saved Models",
+                        [f"{m['model_id']} | Sharpe {m.get('sharpe', 0):.2f} | Return {m.get('total_return', 0):.2%}" for m in saved_models],
+                        key="report_saved_model_select",
+                    ).split(" | ")[0]
+                    if st.button("Load Selected Saved Model", use_container_width=True, key="report_load_saved_model"):
+                        selected_meta = load_model_by_id(cfg.outputs_dir, selected_report_model_id)
+                        if not selected_meta:
+                            st.error("Selected model not found in registry.")
+                        else:
+                            try:
+                                eval_cfg = Config()
+                                eval_cfg.ticker = st.session_state.get("ticker", cfg.ticker)
+                                eval_cfg.start_date = st.session_state.get("start_date", cfg.start_date)
+                                eval_cfg.end_date = st.session_state.get("end_date", cfg.end_date)
+                                eval_cfg.strategy_mode = selected_meta.get("strategy_mode", cfg.strategy_mode)
+                                ret = run_evaluation_pipeline_v2(
+                                    eval_cfg,
+                                    selected_meta["path"],
+                                    model_record=selected_meta,
+                                )
+                                st.session_state["model_ret"] = ret
+                                set_current_model_context(ret)
+                                st.session_state["current_model_source"] = "saved"
+                                st.session_state["active_tab"] = "report"
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error loading saved model: {e}")
+                                return
+            elif report_mode == "Retrain new model":
+                st.info("Use the training tab to retrain and save a new model.")
+
+        if not ret:
+            st.info("Waiting for model training or saved-model loading...")
+            return
+
+        report_placeholder = st.empty()
+        report_placeholder.info("Running strategy inference...")
+        try:
+            recommendation = st.session_state.get("recommendation")
+            if not recommendation:
+                recommendation = compute_recommendation(ret, cfg)
+
+            rr = recommendation["risk_reward_plan"]
+            snap = recommendation["mtf_snapshot"]
+            metrics = ret["metrics"]
+
+            report_placeholder.empty()
+
+            r1, r2, r3, r4 = st.columns(4)
+            with r1:
+                st.markdown(f"""
+##### Recommendation
+* **Close**: {recommendation['latest_close']:,.2f}
+* **Action**: **{recommendation['best_action_name']}**
+* **Direction**: {recommendation['trade_direction']}
+* **Position**: {recommendation['target_position_ratio']:.0%}
+                """)
+            with r2:
+                st.markdown(f"""
+##### MTF SMC
+* W1 bias: {snap['w1_smc_bias']:.0f}
+* D1 bias: {snap['d1_smc_bias']:.0f}
+* H4 bias: {snap['h4_smc_bias']:.0f}
+* H1 bias: {snap['h1_smc_bias']:.0f}
+* Confluence: {snap['mtf_confluence_score']:.1f}
+* Conflict: {'Yes' if snap['mtf_conflict'] else 'No'}
+                """)
+            with r3:
+                st.markdown(f"""
+##### Backtest
+* Return: {metrics.get('total_return', 0)*100:.1f}%
+* Drawdown: {metrics.get('max_drawdown', 0)*100:.1f}%
+* Sharpe: {metrics.get('sharpe_ratio', 0):.2f}
+* Profit Factor: {metrics.get('profit_factor', 0):.2f}
+                """)
+            with r4:
+                if rr.get("risk_reward_valid"):
+                    st.markdown(f"""
+##### Current Target RRR
+* Entry: {rr['entry_price']:,.2f}
+* Stop Loss: {rr['stop_loss_price']:,.2f}
+* Take Profit: {rr['take_profit_price']:,.2f}
+* RR Ratio: **{rr['risk_reward_ratio']:.2f}**
+* Basis: {rr.get('take_profit_basis', '')}
+                    """)
+                else:
+                    st.markdown("##### Current Target RRR\n*No valid RRR*")
+
+            if "rr_details" in snap:
+                st.markdown("---")
+                st.markdown("#### MTF Risk Reward Analysis")
+                rr_cols = st.columns(4)
+                for i, tf in enumerate(["w1", "d1", "h4", "h1"]):
+                    with rr_cols[i]:
+                        tf_rr = snap["rr_details"][tf]
+                        st.markdown(f"##### {tf.upper()} Level")
+                        if pd.notna(tf_rr["entry"]):
+                            st.markdown(f"""
+* **Entry**: {tf_rr['entry']:,.2f}
+* **Stop Loss**: {tf_rr['stop_loss']:,.2f}
+* **Take Profit**: {tf_rr['take_profit']:,.2f}
+* **RR Ratio**: **{tf_rr['rr_ratio']:.2f}**
+* **Basis**: {tf_rr['basis']}
+                            """)
+                        else:
+                            st.markdown("*No valid setup*")
+
+        except Exception as e:
+            st.error(f"Inference failed: {e}")
+
+    # ── AI 評語 Tab ──
+    elif active_tab == "ai_comment":
+        ret = st.session_state.get("model_ret", {})
+        if not ret:
+            st.info("請先完成模型訓練，才能使用 AI 評語功能。")
+            return
+
+        st.subheader("Step 3: Generate AI Comments")
+
+        model_id = st.session_state.get("current_model_id")
+        cached_comment = get_ai_comment(cfg.outputs_dir, model_id) if model_id else None
+        if cached_comment and not st.session_state.get("ai_comment"):
+            st.session_state["ai_comment"] = cached_comment
+
+        recommendation = st.session_state.get("recommendation")
+        if not recommendation:
+            try:
+                recommendation = compute_recommendation(ret, cfg)
+                st.session_state["recommendation"] = recommendation
+            except Exception as e:
+                st.error(f"無法計算推薦指標：{e}")
+                return
+
+        metrics = ret.get("metrics", {})
+
+        btn_label = "🔄 重新生成" if st.session_state.get("ai_comment") else "✨ 生成 AI 評語"
+        col_btn, _ = st.columns([1, 5])
+        with col_btn:
+            gen_btn = st.button(btn_label, use_container_width=True)
+
+        if gen_btn:
+            with st.spinner("AI 分析中，請稍候..."):
+                try:
+                    comment = generate_ai_comment(recommendation, metrics)
+                    st.session_state["ai_comment"] = comment
+                    if model_id:
+                        save_ai_comment(cfg.outputs_dir, model_id, comment)
+                except Exception as e:
+                    st.error(f"AI 評語生成失敗：{e}")
+
+        if st.session_state.get("ai_comment"):
+            with st.container(border=True):
+                st.markdown(st.session_state["ai_comment"])
+
+if __name__ == '__main__':
+    main()

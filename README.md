@@ -8,20 +8,91 @@ DEMO SITE:[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_b
 
 ---
 
+## 🧭 Current Project Summary
+
+The current workspace has been reshaped around a five-step page flow:
+
+1. **Step 0: Data Loading Settings**
+   - Fetch ticker data, choose date range, and refresh the source CSV.
+   - The chart controls live here now.
+
+2. **Step 1: SMC Features**
+   - Use a CSV-backed PD arrays table.
+   - Build market structure from `smartmoneyconcepts` plus project-specific SMC fields.
+   - Show weekly-first structure, swing versions, invalidation state, and raw feature columns on demand.
+
+3. **Step 2: Strategy Selection**
+   - Choose between `DQN Position` and `Double DQN-on-Buy with RR-box-Sell`.
+   - Save, load, or delete trained models.
+   - Training can use fixed epochs or early stop.
+
+4. **Step 3: AI Suggestion**
+   - Generate or reuse cached AI comments for the selected model.
+   - Show performance metrics and the W1-vs-H4 reward framing.
+
+5. **Step 4: Trading Pair Review**
+   - Review BUY/SELL pairs with a shaded RR box.
+   - The box is anchored to `W1 Target` and `H4 Stop`.
+   - Save human feedback into the trade review table.
+
+Other important changes in this version:
+- Step 1 now regenerates and refreshes `outputs/step1_pd_arrays.csv` from market data.
+- The Step 1 table is CSV-backed and uses the market timestamp, not the file create/update time.
+- The SMC pipeline prefers the GitHub-backed `smartmoneyconcepts` outputs for swing, BOS/CHoCH, FVG, OB, and liquidity.
+- `PyIndicators` is documented as a supporting liquidity-sweep reference, not the primary SMC engine.
+- The buy-only training objective is now biased toward reaching the `W1 Target` before the `H4 Stop`.
+
+---
+
+## 📐 Trading Strategy
+
+This project now follows a four-step workflow:
+
+1. **Step 1: SMC Market Structure**
+   - Build PD arrays for `W1`, `D1`, `H4`, `H1`
+   - Store swing high, swing low, FVG midpoint, and other SMC fields per timeframe
+   - Use this table as the structure reference for the rest of the system
+
+2. **Step 2: Double DQN-on-Buy with RR-box-Sell**
+   - Use the SMC PD arrays plus OHLC and other features as the model state
+   - DQN only makes the buy decision
+   - Stop loss is derived from the nearest `H1` swing low
+   - Take profit is derived from the `W1` swing high
+
+3. **Step 3: AI Comments**
+   - Generate AI comments from the selected model and its results
+   - Reuse cached comments when the same model is selected again
+
+4. **Step 4: Trade Pair Review**
+   - Review each BUY/SELL pair
+   - Show the RR box and trade context
+   - Save human feedback to the review table
+
+---
+
 ## ✨ 核心特色 (Core Features)
 
 ### 1. 🔍 聰明錢概念 (Smart Money Concepts, SMC) 分析
-系統使用 `smartmoneyconcepts` 技術將傳統 K 線轉化為機構級交易員關注的市場結構特徵，包含：
+系統使用 `smartmoneyconcepts` 技術將傳統 K 線轉化為機構級交易員關注的市場結構特徵。這個套件來自：
+
+- GitHub: https://github.com/joshyattridge/smart-money-concepts
+- PyPI: `smartmoneyconcepts`
+
+在本專案中，它負責提供基礎的 SMC 訊號，並作為 Step 1 的 PD arrays 與 Step 2 訓練狀態來源之一。主要輸出包括：
+
 * **流動性掃蕩 (Liquidity Sweeps)**
 * **前期高低點 (Old Highs / Old Lows / BSL / SSL)**
 * **合理價值缺口 (Fair Value Gaps, FVG)**：Bullish / Bearish Gaps
 * **訂單塊 (Order Blocks, OB)**：供需失衡的機構建倉區塊
 * **溢價/折價區 (Premium / Discount Zones)**
+* **PD Arrays**：W1 / D1 / H4 / H1 的 swing high、swing low、FVG midpoint 與關鍵結構資料
+* **BOS / CHoCH**：Break of Structure 與 Change of Character
+* **Retracement / Swing Level**：用來描述價格從 swing 高低點回撤的狀態
 
 ### 2. 🧠 多時間級別 (MTF) DQN 決策代理人
 突破單一時間框架的限制，模型架構融合了**大局觀**與**微觀進場點**：
-* **狀態維度 (State Dimension)**：結合了技術指標與 W1, D1, H4, H1 四個時間級別的 SMC Bias（偏誤方向）。
-* **動作空間 (Action Space)**：採用資金部位管理模式，動態調整持倉比例 (`0%`, `25%`, `50%`, `100%`)。
+* **狀態維度 (State Dimension)**：結合了 PD Arrays、OHLC 與多時間級別的 SMC / 技術指標。
+* **動作空間 (Action Space)**：支援傳統部位管理模式與 `Double DQN-on-Buy with RR-box-Sell` 模式。
 * **獎勵塑形 (Reward Shaping)**：
   * 加入 **MTF Bonus**：順應大時區趨勢時給予額外獎勵。
   * 加入 **Conflict Penalty**：逆勢操作時給予懲罰。
@@ -83,6 +154,43 @@ CLAUDE.md                                      # Root instructions for Claude-co
 When creating a new project from this repository, copy those three paths into
 the new project root. Restart Codex, Claude Code, or Cursor after copying so the
 new rules are loaded.
+
+### 0.1 SMC Indicator Source
+
+This project also depends on the upstream Smart Money Concepts package:
+
+```bash
+pip install smartmoneyconcepts
+```
+
+The package provides the raw SMC primitives used by the project:
+
+- `swing_highs_lows(...)` for swing structure
+- `fvg(...)` for fair value gaps
+- `bos_choch(...)` for break of structure and change of character
+- `ob(...)` for order blocks
+- `liquidity(...)` for liquidity levels and sweeps
+- `previous_high_low(...)` for prior period reference levels
+- `retracements(...)` for retracement depth and direction
+
+In this repo, those outputs are merged into the multi-timeframe dataset and the Step 1 PD arrays table so the DQN model can train on a consistent SMC state.
+
+### 0.2 Liquidity Sweep Helper
+
+We also reference [`PyIndicators`](https://github.com/coding-kitties/PyIndicators) for liquidity sweep logic.
+It is not a full SMC framework, but it includes helpers for:
+
+- liquidity sweep detection
+- internal / external liquidity zones
+- price action pivots that help validate sweep events
+
+In this project, that is useful for the review layer and for spotting cases where price briefly pierces a swing high or swing low and then rejects.
+It complements the main SMC package by giving a second opinion on sweep-style events.
+
+### SMC Source Links
+
+- [`smartmoneyconcepts`](https://github.com/joshyattridge/smart-money-concepts)
+- [`PyIndicators`](https://github.com/coding-kitties/PyIndicators)
 
 ### 1. 建立虛擬環境與安裝依賴套件
 
