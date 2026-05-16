@@ -11,6 +11,32 @@
 ./ending.sh    # Commit, push, and finalize session
 ```
 
+## 🧭 New Project Agent Rules
+
+When using this repository as a template for a new project, keep these
+Karpathy-inspired agent rule files:
+
+```text
+CLAUDE.md
+.cursor/rules/karpathy-guidelines.mdc
+.agents/skills/karpathy-guidelines/SKILL.md
+```
+
+They come from `huanchen1107/andrej-karpathy-skills` and make AI coding agents
+prefer clear assumptions, simple implementations, surgical diffs, and verifiable
+success criteria.
+
+For a brand-new repository:
+
+```bash
+mkdir -p .cursor/rules .agents/skills/karpathy-guidelines
+cp /path/to/template/CLAUDE.md CLAUDE.md
+cp /path/to/template/.cursor/rules/karpathy-guidelines.mdc .cursor/rules/karpathy-guidelines.mdc
+cp /path/to/template/.agents/skills/karpathy-guidelines/SKILL.md .agents/skills/karpathy-guidelines/SKILL.md
+```
+
+Restart Codex, Claude Code, or Cursor after copying these files.
+
 ## 🤖 How it Works
 
 `startup.sh` → reads `project_initial.md` → launches `cc.sh` → interactive menu:

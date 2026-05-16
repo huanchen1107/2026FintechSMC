@@ -26,6 +26,12 @@ check_cmd "curl" "brew install curl"
 check_cmd "git"  "brew install git"
 
 echo ""
+echo "🧭 AI Agent Rules："
+[ -f "CLAUDE.md" ] && echo "  ✅ CLAUDE.md root instructions found" || echo "  ⚠️  CLAUDE.md not found"
+[ -f ".cursor/rules/karpathy-guidelines.mdc" ] && echo "  ✅ Cursor Karpathy rule found" || echo "  ⚠️  .cursor/rules/karpathy-guidelines.mdc not found"
+[ -f ".agents/skills/karpathy-guidelines/SKILL.md" ] && echo "  ✅ Codex Karpathy skill found" || echo "  ⚠️  .agents/skills/karpathy-guidelines/SKILL.md not found"
+
+echo ""
 echo "🔑 API Keys (.env)："
 if [ -f ".env" ]; then
     source .env 2>/dev/null

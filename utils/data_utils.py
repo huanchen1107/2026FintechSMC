@@ -456,10 +456,6 @@ def prepare_data_for_chart(df: pd.DataFrame, rolling_window: int) -> pd.DataFram
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").reset_index(drop=True)
 
-    # ── EMA Indicators for TradingView ──
-    df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
-    df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
-
     try:
         from smartmoneyconcepts import smc
         df_smc = df.copy()

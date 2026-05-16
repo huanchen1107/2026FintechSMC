@@ -10,7 +10,7 @@ from recommend_v2 import recommend_strategy_v2
 from utils.data_utils import FEATURE_COLUMNS, prepare_data_for_chart
 from utils.data_utils_v2 import FEATURE_COLUMNS as FEATURE_COLUMNS_V2
 from ai_comment import generate_ai_comment
-from utils.analysis_utils import group_trades_into_pairs, pairs_to_dataframe
+# # from utils.analysis_utils import group_trades_into_pairs, pairs_to_dataframe
 from lightweight_charts.widgets import StreamlitChart
 
 # 設定頁面配置 (必須是第一個 Streamlit 指令)
@@ -313,10 +313,10 @@ def render_tradingview_chart(df, rec, snap):
         
         # Add EMA lines
         line20 = chart.create_line(name='EMA 20', color='rgba(41, 98, 255, 0.6)')
-        line20.set(chart_df[['time', 'ema20']].rename(columns={'ema20': 'EMA 20'}))
+        line20.set(chart_df[['time', 'ema20']].rename(columns={'ema20': 'value'}))
         
         line50 = chart.create_line(name='EMA 50', color='rgba(255, 152, 0, 0.6)')
-        line50.set(chart_df[['time', 'ema50']].rename(columns={'ema50': 'EMA 50'}))
+        line50.set(chart_df[['time', 'ema50']].rename(columns={'ema50': 'value'}))
 
         
         # 3. Add Dynamic Markers
@@ -446,6 +446,184 @@ def render_trade_analysis():
         st.plotly_chart(fig, use_container_width=True)
 
 
+
+def render_trade_analysis():
+    st.subheader("🔍 Advanced Trade Analysis & Strategy Debugger")
+    
+    ret = st.session_state.get("model_ret")
+    raw_df = st.session_state.get("raw_df")
+    cfg = Config()
+    
+    if not ret or raw_df is None:
+        st.info("請先完成模型訓練以進行交易分析。")
+        return
+
+    # 1. 提取交易對
+    trades_df = ret.get("test_backtest", {}).get("trades_df")
+    if trades_df is None or trades_df.empty:
+        st.warning("無交易紀錄。")
+        return
+
+    pairs = []
+    current_buy = None
+    for _, row in trades_df.iterrows():
+        if row['type'] == 'BUY':
+            current_buy = row
+        elif row['type'] == 'SELL' and current_buy is not None:
+            pnl = (row['price'] - current_buy['price']) / current_buy['price']
+            pairs.append({
+                "ID": len(pairs) + 1,
+                "Buy Time": current_buy['datetime'],
+                "Sell Time": row['datetime'],
+                "Buy Price": current_buy['price'],
+                "Sell Price": row['price'],
+                "PnL%": pnl * 100,
+                "Reason": "SMC MTF Confluence + DQN Alpha Signal"
+            })
+            current_buy = None
+    
+    if not pairs:
+        st.warning("查無完成的交易對 (BUY -> SELL)。")
+        return
+        
+    pairs_df = pd.DataFrame(pairs)
+
+    # 3. 頂部統計數據
+    win_rate = (pairs_df["PnL%"] > 0).mean() * 100
+    avg_pnl = pairs_df["PnL%"].mean()
+    
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("Total Trades", len(pairs_df))
+    s2.metric("Win Rate", f"{win_rate:.1f}%")
+    s3.metric("Avg PnL", f"{avg_pnl:.2f}%")
+    s4.metric("Max PnL", f"{pairs_df['PnL%'].max():.2f}%")
+
+    st.markdown("---")
+
+    # 2. 佈局：左側圖表 (75%)，右側列表 (25%)
+    col_chart, col_list = st.columns([3, 1])
+
+    with col_list:
+        st.write("##### Trade History")
+        
+        # 篩選器
+        filter_type = st.radio("Filter", ["All", "Profitable", "Losing"], horizontal=True)
+        if filter_type == "Profitable":
+            display_df = pairs_df[pairs_df["PnL%"] > 0]
+        elif filter_type == "Losing":
+            display_df = pairs_df[pairs_df["PnL%"] <= 0]
+        else:
+            display_df = pairs_df
+
+        if display_df.empty:
+            st.write("No trades matching filter.")
+            selected_id = None
+        else:
+            # 建立顯示名稱
+            display_df["label"] = display_df.apply(lambda r: f"#{r['ID']} | {r['PnL%']:.1f}% | {str(r['Buy Time'])[:10]}", axis=1)
+            selected_label = st.selectbox("Select Pair to Inspect", display_df["label"].tolist(), index=len(display_df)-1)
+            selected_id = int(selected_label.split(" ")[0][1:])
+        
+        if selected_id:
+            pair = pairs_df[pairs_df["ID"] == selected_id].iloc[0]
+            
+            # 顯示詳細資訊
+            with st.container(border=True):
+                st.write(f"**Trade #{selected_id} Details**")
+                pnl_color = "green" if pair["PnL%"] > 0 else "red"
+                st.markdown(f"PnL: :{pnl_color}[{pair['PnL%']:.2f}%]")
+                st.write(f"Entry: **{pair['Buy Price']:,.2f}**")
+                st.write(f"Exit: **{pair['Sell Price']:,.2f}**")
+                st.write(f"Duration: {pd.Timedelta(pair['Sell Time'] - pair['Buy Time'])}")
+                st.divider()
+                st.write("**Buy Reason:**")
+                st.caption(pair["Reason"])
+                st.write("**Sell Reason:**")
+                st.caption("DQN Target Profit Reached / Model Exit Signal")
+
+    with col_chart:
+        if selected_id:
+            # 取得該交易對的時間範圍，並稍微擴張以利觀察
+            # 根據交易長度動態調整 padding
+            trade_duration = pair["Sell Time"] - pair["Buy Time"]
+            padding = max(trade_duration * 0.5, pd.Timedelta(hours=12))
+            
+            t_start = pair["Buy Time"] - padding
+            t_end = pair["Sell Time"] + padding
+            
+            # 從 raw_df 篩選資料
+            mask = (raw_df["date"] >= t_start) & (raw_df["date"] <= t_end)
+            chart_data = raw_df.loc[mask].copy()
+            
+            if chart_data.empty:
+                st.error("無法取得該時段的圖表資料。")
+            else:
+                fig = plotly_go.Figure()
+                
+                # 背景 K線圖 (淡化)
+                fig.add_trace(plotly_go.Candlestick(
+                    x=chart_data['date'],
+                    open=chart_data['Open'],
+                    high=chart_data['High'],
+                    low=chart_data['Low'],
+                    close=chart_data['Close'],
+                    name='Price',
+                    increasing_line_color='rgba(38, 166, 154, 0.3)', 
+                    decreasing_line_color='rgba(239, 83, 80, 0.3)',
+                    showlegend=False
+                ))
+                
+                # 交易期間的 K線圖 (亮顯)
+                mask_active = (chart_data["date"] >= pair["Buy Time"]) & (chart_data["date"] <= pair["Sell Time"])
+                active_data = chart_data.loc[mask_active]
+                
+                fig.add_trace(plotly_go.Candlestick(
+                    x=active_data['date'],
+                    open=active_data['Open'],
+                    high=active_data['High'],
+                    low=active_data['Low'],
+                    close=active_data['Close'],
+                    name='Active Trade',
+                    increasing_line_color='#26a69a', 
+                    decreasing_line_color='#ef5350'
+                ))
+                
+                # 標註買賣點
+                fig.add_trace(plotly_go.Scatter(
+                    x=[pair["Buy Time"]], y=[pair["Buy Price"]],
+                    mode='markers+text', name='BUY',
+                    marker=dict(symbol='triangle-up', size=18, color='#00E676', line=dict(width=2, color='white')),
+                    text=["ENTRY"], textposition="bottom center"
+                ))
+                
+                fig.add_trace(plotly_go.Scatter(
+                    x=[pair["Sell Time"]], y=[pair["Sell Price"]],
+                    mode='markers+text', name='SELL',
+                    marker=dict(symbol='triangle-down', size=18, color='#FF5252', line=dict(width=2, color='white')),
+                    text=["EXIT"], textposition="top center"
+                ))
+                
+                # 繪製連接線
+                fig.add_trace(plotly_go.Scatter(
+                    x=[pair["Buy Time"], pair["Sell Time"]],
+                    y=[pair["Buy Price"], pair["Sell Price"]],
+                    mode='lines', name='Trade Path',
+                    line=dict(color='white', width=2, dash='dash')
+                ))
+                
+                fig.update_layout(
+                    height=650,
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    template="plotly_dark",
+                    xaxis_rangeslider_visible=False,
+                    hovermode="x unified"
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Select a trade from the list to inspect the chart.")
+
+
 def _render_log_html(log_messages):
     """共用的 log HTML 渲染函式。"""
     display_text = "\n".join(log_messages)
@@ -457,6 +635,8 @@ def _render_log_html(log_messages):
 
 
 def main():
+    if "raw_df" not in st.session_state and "ticker" not in st.session_state:
+        st.session_state["auto_fetch"] = True
     # ── Header ──
     st.markdown("""
     <style>
@@ -491,7 +671,7 @@ def main():
 
     col_input1, col_input2, col_input3, col_btn1, col_btn2 = st.columns([2.5, 1.5, 1.5, 0.7, 1.0])
     with col_input1:
-        ticker = st.text_input("Ticker (e.g. AAPL, 2330.TW)", value="")
+        ticker = st.text_input("Ticker (e.g. AAPL, 2330.TW)", value="2330.TW")
     if ticker and ticker != st.session_state.get("ticker") and ticker.strip() != "":
         st.session_state["auto_fetch"] = True
     with col_input2:
@@ -581,6 +761,11 @@ def main():
         if st.button("🧠 AI Comment", use_container_width=True, key="tab_ai",
                      type="primary" if active_tab == "ai_comment" else "secondary"):
             st.session_state["active_tab"] = "ai_comment"
+            st.rerun()
+    with tab_col4:
+        if st.button("🔍 Trade Analysis", use_container_width=True, key="tab_analysis",
+                     type="primary" if active_tab == "analysis" else "secondary"):
+            st.session_state["active_tab"] = "analysis"
             st.rerun()
     with tab_col4:
         if st.button("📊 Trade Analysis", use_container_width=True, key="tab_analysis",

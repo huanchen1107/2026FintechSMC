@@ -68,6 +68,22 @@ DRL-Final/
 
 ## 🛠️ 安裝與啟動 (Installation & Quick Start)
 
+### 0. AI Agent Rules Bootstrap
+
+This project includes the Karpathy-inspired agent rules from
+`huanchen1107/andrej-karpathy-skills` so new coding sessions bias toward
+surgical, verifiable changes:
+
+```text
+CLAUDE.md                                      # Root instructions for Claude-compatible agents
+.cursor/rules/karpathy-guidelines.mdc          # Cursor project rule, alwaysApply: true
+.agents/skills/karpathy-guidelines/SKILL.md    # Project-local Codex skill
+```
+
+When creating a new project from this repository, copy those three paths into
+the new project root. Restart Codex, Claude Code, or Cursor after copying so the
+new rules are loaded.
+
 ### 1. 建立虛擬環境與安裝依賴套件
 
 為避免套件衝突，強烈建議使用虛擬環境 (Virtual Environment)：
@@ -144,8 +160,6 @@ streamlit run app.py
 
 | Tag | Date | Description |
 | :--- | :--- | :--- |
-| `tv-ok-v3-good` | 2026-05-15 | **Ultimate TradingView Dashboard (Stable)**. Fully resolved all deployment, dependency, and indicator rendering bugs. The gold standard version. |
-| `analysis-v1` | 2026-05-15 | **Advanced Trade Analysis Interface**. Synchronized split-screen dashboard with trade-pair grouping, zoom-to-trade interaction, and profit/loss analytics. |
 | `tv-ok-v2` | 2026-05-15 | **Ultimate TradingView Dashboard**. Final stable version with auto-update, EMAs, hotkeys help, light theme default, and fixed-width event reliability. |
 | `tv-basic-v2` | 2026-05-15 | **Advanced TradingView Dashboard**. Added themes, drawing toolbox, and watermarks. |
 | `ok_20260515v1` | 2026-05-15 | **Core Integration**. Refactored `ai_comment.py` to use OpenRouter API and integrated initial TradingView Lightweight Charts engine. |
