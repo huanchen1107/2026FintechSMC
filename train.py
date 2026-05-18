@@ -149,8 +149,8 @@ def run_training_pipeline(
 
     # 6. Save plots
     plt.figure(figsize=(10, 5))
-    plt.plot(logs_df["episode"], logs_df["train_return"], label="Train Return")
-    plt.plot(logs_df["episode"], logs_df["val_return"], label="Val Return")
+    plt.plot(logs_df["episode"].values, logs_df["train_return"].values, label="Train Return")
+    plt.plot(logs_df["episode"].values, logs_df["val_return"].values, label="Val Return")
     plt.axhline(0, linestyle="--", linewidth=1)
     plt.title("MTF DQN Training / Validation Return")
     plt.xlabel("Episode")
@@ -162,7 +162,7 @@ def run_training_pipeline(
     plt.close()
 
     plt.figure(figsize=(10, 5))
-    plt.plot(logs_df["episode"], logs_df["avg_loss"], label="Avg Loss")
+    plt.plot(logs_df["episode"].values, logs_df["avg_loss"].values, label="Avg Loss")
     plt.title("DQN Training Loss")
     plt.xlabel("Episode")
     plt.ylabel("Loss")

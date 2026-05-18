@@ -223,14 +223,88 @@ def normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def download_ohlcv_basic(ticker, start=None, end=None, interval="1d", period=None):
+    from config import Config
+    import sqlite3
+    db_path = Config().outputs_dir / "stock_cache.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS stock_data (
+            ticker TEXT,
+            interval TEXT,
+            datetime TIMESTAMP,
+            open REAL,
+            high REAL,
+            low REAL,
+            close REAL,
+            volume REAL,
+            UNIQUE(ticker, interval, datetime)
+        )
+    ''')
+    conn.commit()
+
+    query = f"SELECT * FROM stock_data WHERE ticker='{ticker}' AND interval='{interval}'"
+    try:
+        cached_df = pd.read_sql(query, conn, index_col='datetime', parse_dates=['datetime'])
+        if not cached_df.empty:
+            cached_df = cached_df.drop(columns=['ticker', 'interval'], errors='ignore')
+            cached_df.index = pd.to_datetime(cached_df.index)
+    except Exception:
+        cached_df = pd.DataFrame()
+
+    dl_start = start
+    need_download = True
+
+    if not cached_df.empty and start is not None:
+        max_cached_date = cached_df.index.max()
+        if pd.to_datetime(start) < max_cached_date:
+            dl_start = (max_cached_date + pd.Timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S')
+        
+    if dl_start and end and not cached_df.empty:
+        if pd.to_datetime(dl_start) >= pd.to_datetime(end):
+            need_download = False
+
     kwargs = {"tickers": ticker, "interval": interval, "auto_adjust": True, "progress": False, "threads": True}
     if period is not None:
         kwargs["period"] = period
+        need_download = True
     else:
-        kwargs["start"] = start
+        kwargs["start"] = dl_start
         kwargs["end"] = end
-    df = yf.download(**kwargs)
-    return normalize_ohlcv_columns(df)
+
+    new_df = pd.DataFrame()
+    if need_download:
+        print(f"Downloading missing data for {ticker} ({interval})...")
+        try:
+            raw_new = yf.download(**kwargs)
+            new_df = normalize_ohlcv_columns(raw_new)
+            
+            if not new_df.empty:
+                save_df = new_df.copy()
+                save_df['ticker'] = ticker
+                save_df['interval'] = interval
+                save_df['datetime'] = save_df.index
+                save_df.to_sql("temp_stock_data", conn, if_exists="replace", index=False)
+                conn.execute('''
+                    INSERT OR REPLACE INTO stock_data (ticker, interval, datetime, open, high, low, close, volume)
+                    SELECT ticker, interval, datetime, open, high, low, close, volume FROM temp_stock_data
+                ''')
+                conn.commit()
+        except Exception as e:
+            print(f"Download failed: {e}")
+            
+    conn.close()
+
+    combined = pd.concat([cached_df, new_df]) if not new_df.empty else cached_df
+    if not combined.empty:
+        combined = combined[~combined.index.duplicated(keep='last')].sort_index()
+        if start:
+            combined = combined[combined.index >= pd.to_datetime(start)]
+        if end:
+            combined = combined[combined.index <= pd.to_datetime(end)]
+            
+    return combined
 
 
 def download_ohlcv_with_fallback(ticker, start, end, interval, fallback_periods=("730d", "365d", "180d", "90d", "60d")):

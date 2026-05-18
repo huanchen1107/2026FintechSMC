@@ -203,8 +203,8 @@ def run_training_pipeline_v2(
 
     # 6. Save plots (V2)
     plt.figure(figsize=(10, 5))
-    plt.plot(logs_df["episode"], logs_df["train_return"], label="Train Return")
-    plt.plot(logs_df["episode"], logs_df["val_return"], label="Val Return")
+    plt.plot(logs_df["episode"].values, logs_df["train_return"].values, label="Train Return")
+    plt.plot(logs_df["episode"].values, logs_df["val_return"].values, label="Val Return")
     plt.axhline(0, linestyle="--", linewidth=1)
     plt.title("MTF DQN Training / Validation Return (V2)")
     plt.xlabel("Episode")
@@ -216,9 +216,9 @@ def run_training_pipeline_v2(
     plt.close()
 
     plt.figure(figsize=(10, 5))
-    plt.plot(logs_df["episode"], logs_df["avg_loss"], label="Avg Loss")
+    plt.plot(logs_df["episode"].values, logs_df["avg_loss"].values, label="Avg Loss")
     if "test_loss" in logs_df.columns:
-        plt.plot(logs_df["episode"], logs_df["test_loss"], label="Test Loss Proxy")
+        plt.plot(logs_df["episode"].values, logs_df["test_loss"].values, label="Test Loss Proxy")
     plt.title("DQN Training Loss (V2)")
     plt.xlabel("Episode")
     plt.ylabel("Loss")

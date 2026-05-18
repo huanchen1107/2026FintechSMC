@@ -38,8 +38,8 @@ class Config:
     state_lookback: int = 100
 
     # ── DQN training ──
-    episodes: int = 1000
-    early_stop_enabled: bool = False
+    episodes: int = 50
+    early_stop_enabled: bool = True
     early_stop_patience: int = 50
     early_stop_min_delta: float = 0.001
     batch_size: int = 64
@@ -67,7 +67,7 @@ class Config:
     higher_tf_conflict_penalty: float = 0.002
 
     # ── Strategy mode ──
-    strategy_mode: str = "dqn_position"
+    strategy_mode: str = "dqn_on_buy_rr_box_sell"
 
     # ── SMC feature params ──
     swing_window: int = 5

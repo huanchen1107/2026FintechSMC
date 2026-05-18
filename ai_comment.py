@@ -2,9 +2,13 @@ import requests
 import streamlit as st
 import os
 from dotenv import load_dotenv
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("ai_comment")
 
-# Load environment variables from .env
-load_dotenv()
+# Load environment variables from .env using absolute path resolution
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+load_dotenv(dotenv_path=env_path, override=True)
 
 
 def _build_prompt(recommendation: dict, metrics: dict) -> str:
@@ -103,19 +107,59 @@ def _build_prompt(recommendation: dict, metrics: dict) -> str:
 """
 
 
+def _generate_with_gemini_api(prompt: str):
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key:
+        gemini_key = st.secrets.get("GEMINI_API_KEY", "")
+    if gemini_key:
+        gemini_key = gemini_key.strip().strip('"').strip("'")
+        if gemini_key == "AIzaSyDtraUgiv__LAvtPPQh4h5muQeP3eTkSMI" or not gemini_key:
+            return None
+        
+        logger.info(f"Detected GEMINI_API_KEY (len={len(gemini_key)}). Calling Google AI Studio directly...")
+        # Use gemini-2.5-flash as the standard, extremely fast, completely free model
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+        try:
+            resp = requests.post(
+                url,
+                headers={"Content-Type": "application/json"},
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}]
+                },
+                timeout=60
+            )
+            resp.raise_for_status()
+            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+            return text
+        except Exception as e:
+            logger.error(f"Gemini API Direct call failed: {str(e)}")
+            if hasattr(e, "response") and e.response is not None:
+                logger.error(f"Gemini API Details: {e.response.text}")
+    return None
+
+
 def generate_ai_comment(recommendation: dict, metrics: dict) -> str:
-    # 優先從環境變數讀取 OpenRouter API Key
+    prompt = _build_prompt(recommendation, metrics)
+    
+    # 優先嘗試官方 Gemini API
+    gemini_result = _generate_with_gemini_api(prompt)
+    if gemini_result is not None:
+        return gemini_result
+        
+    # 否則退回使用 OpenRouter API
     api_key = os.getenv("OPENROUTER_API_KEY")
-    model = os.getenv("MODEL", "open_router/deepseek/deepseek-chat")
+    model = os.getenv("MODEL", "open_router/google/gemini-2.0-flash-exp:free")
     
     if not api_key:
         # 嘗試從 streamlit secrets 讀取 (相容 Streamlit Cloud)
         api_key = st.secrets.get("OPENROUTER_API_KEY", "")
+        
+    if api_key:
+        api_key = api_key.strip().strip('"').strip("'")
+        logger.info(f"Loaded OPENROUTER_API_KEY for comment (len={len(api_key)})")
     
     if not api_key:
-        return "❌ 未設定 OPENROUTER_API_KEY，請在 `.env` 或 Streamlit Cloud Secrets 中加入。"
-
-    prompt = _build_prompt(recommendation, metrics)
+        return "❌ 未設定 OPENROUTER_API_KEY，且無有效 GEMINI_API_KEY。請在 `.env` 中加入 API Key。"
     
     # 處理 OpenRouter 模型名稱 (移除 open_router/ 前綴，如果有的話)
     actual_model = model.replace("open_router/", "")
@@ -137,4 +181,91 @@ def generate_ai_comment(recommendation: dict, metrics: dict) -> str:
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
     except Exception as e:
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                err_text = e.response.text
+                logger.error(f"OpenRouter API Error: {err_text}")
+                return f"❌ AI 評語生成失敗：{e.response.status_code} - {err_text}"
+            except Exception:
+                pass
         return f"❌ AI 評語生成失敗：{str(e)}"
+
+
+def generate_journal_ai_reply(pair_info: dict, user_comment: str, history: list) -> str:
+    # 格式化歷史對話
+    history_str = ""
+    for idx, h in enumerate(history):
+        history_str += f"- [{h.get('timestamp')}] {h.get('author')}: {h.get('content')}\n"
+        
+    prompt = f"""你是一位卓越的量化交易導師與 SMC (Smart Money Concepts) 專家。
+我們正在審查一筆強化學習 DQN 智能體在回測中完成的交易對 (Trade Pair)。
+
+## 交易對基本資訊
+- Ticker: {pair_info.get('ticker')}
+- 進場時間：{pair_info.get('buy_time')} / 價格：{pair_info.get('buy_price')}
+- 出場時間：{pair_info.get('sell_time')} / 價格：{pair_info.get('sell_price')}
+- 報酬率：{pair_info.get('profit_pct', 0)*100:.2f}%
+- 停損設點：{pair_info.get('rr_stop_loss_price')}
+- 停利設點：{pair_info.get('rr_take_profit_price')}
+- R:R 計算依據：{pair_info.get('rr_basis')}
+- 買入原因 (RL Agent Rationale): {pair_info.get('buy_reason')}
+- 賣出原因 (RL Agent Rationale): {pair_info.get('sell_reason')}
+
+## 核心交易邏輯回顧 (SMC × DRL 特性)
+1. **動態/移動出場 (Trailing SL/TP)**: 智能體使用的停損/停利點是基於當前時間步 (Current Step) 滾動計算的，因此會在行情的推動下呈移動/追蹤態勢。
+2. **Q-Value 超越常規偏向 (DQN Q-value overrides standard bias)**: DQN 智能體以最大化長期回報為目標。若在多時框 Bias 為空頭 (-1) 時建倉 100%，是因為它透過深度網絡學習到此處是高勝率的折價積累區/清算區。
+
+## 歷史討論紀錄
+{history_str or "（目前無歷史討論）"}
+
+## 使用者最新問題/意見
+"{user_comment}"
+
+請針對使用者的問題，給予極度專業、條理清晰且富有洞察力的回答，共同探討這筆交易的優劣。使用繁體中文回覆。
+"""
+
+    # 優先嘗試官方 Gemini API
+    gemini_result = _generate_with_gemini_api(prompt)
+    if gemini_result is not None:
+        return gemini_result
+
+    # 否則退回使用 OpenRouter API
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    model = os.getenv("MODEL", "open_router/google/gemini-2.0-flash-exp:free")
+    
+    if not api_key:
+        api_key = st.secrets.get("OPENROUTER_API_KEY", "")
+        
+    if api_key:
+        api_key = api_key.strip().strip('"').strip("'")
+        logger.info(f"Loaded OPENROUTER_API_KEY for Q&A reply (len={len(api_key)})")
+    
+    if not api_key:
+        return "❌ 未設定 OPENROUTER_API_KEY，且無有效 GEMINI_API_KEY。請在 `.env` 中加入 API Key。"
+        
+    actual_model = model.replace("open_router/", "")
+    try:
+        resp = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "HTTP-Referer": "https://github.com/huanchen1107/2026FintechSMC",
+                "X-Title": "SMC DRL Trading Platform",
+            },
+            json={
+                "model": actual_model,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                err_text = e.response.text
+                logger.error(f"OpenRouter API Error: {err_text}")
+                return f"❌ AI 討論回覆生成失敗：{e.response.status_code} - {err_text}"
+            except Exception:
+                pass
+        return f"❌ AI 討論回覆生成失敗：{str(e)}"

@@ -71,7 +71,7 @@ if [ "$START_PROXY" = true ]; then
     fi
 
     lsof -ti :$PORT | xargs kill -9 2>/dev/null
-    (cd "$PROXY_DIR" && uv run python server.py --port $PORT >> /tmp/freecc_proxy.log 2>&1) &
+    (cd "$PROXY_DIR" && uv run --python 3.13 python server.py --port $PORT >> /tmp/freecc_proxy.log 2>&1) &
     PROXY_PID=$!
     echo "⏳ 等待代理伺服器就緒..."
     while ! curl -s "http://localhost:$PORT/health" > /dev/null; do sleep 1; done

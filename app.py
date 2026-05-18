@@ -1,4 +1,10 @@
 import streamlit as st
+if not hasattr(st, "fragment"):
+    def fragment_fallback(func=None, *args, **kwargs):
+        if func is None:
+            return lambda f: f
+        return func
+    st.fragment = fragment_fallback
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -14,7 +20,7 @@ from utils.data_utils_v2 import FEATURE_COLUMNS as FEATURE_COLUMNS_V2
 from utils.data_utils_v2 import build_mtf_dataset, download_ohlcv_with_fallback
 from utils.data_utils_v2 import download_and_build_mtf
 from utils.data_utils_v2 import ensure_datetime_index, prepare_timeframe_features, resample_ohlcv, merge_asof_higher_tf, add_mtf_confluence_features, add_pd_validity_features, add_risk_reward_features_by_timeframe
-from ai_comment import generate_ai_comment
+from ai_comment import generate_ai_comment, generate_journal_ai_reply
 from utils.ai_comment_cache import get_ai_comment, save_ai_comment
 from utils.model_registry import list_models, load_model_by_id, delete_model_by_id, register_model
 from utils.trade_pairs import reconstruct_trade_pairs, pairs_to_dataframe, append_trade_review, ensure_reviews_file
@@ -853,15 +859,20 @@ def render_trade_analysis():
         axis=1,
     )
 
+    # 1. 頁面分成左右兩欄：左邊放大型圖表與圖表控制，右邊放交易選擇與稽核 Inspector
     col_chart, col_panel = st.columns([3, 1])
+
+    # ────────────────────────────────────────────────────────
+    # 右邊欄位：Trade Inspector & Audit Panel
+    # ────────────────────────────────────────────────────────
     with col_panel:
-        st.markdown("#### Trade Pairs")
+        st.markdown("### 🔍 Trade Inspector")
         label_list = pair_options["label"].tolist()
         default_pair_id = int(st.session_state.get("selected_trade_pair_id", int(pairs_df.iloc[0]["pair_id"])))
         default_label = pair_options.loc[pair_options["pair_id"] == default_pair_id, "label"]
         default_index = label_list.index(default_label.iloc[0]) if not default_label.empty else 0
         selected_label = st.selectbox(
-            "Select Pair",
+            "Select Trade Pair",
             label_list,
             index=default_index,
         )
@@ -869,21 +880,28 @@ def render_trade_analysis():
         st.session_state["selected_trade_pair_id"] = selected_pair_id
         pair_row = pairs_df[pairs_df["pair_id"] == selected_pair_id].iloc[0]
 
-        st.metric("Profit %", f"{pair_row['profit_pct']*100:+.2f}%")
-        st.metric("PnL", f"{pair_row['pnl']:+.2f}")
-        st.metric("Training Reward", f"{float(pair_row.get('training_reward', pair_row['profit_pct'] * 100.0)):+.2f}")
-        st.metric("RR Progress", f"{float(pair_row.get('rr_progress', 0.0)):.2f}")
-        st.metric("RR Ratio", f"{float(pair_row.get('rr_ratio', 0.0)):.2f}")
-        st.write(f"**Buy Reason:** {pair_row['buy_reason'] or 'N/A'}")
-        st.write(f"**Sell Reason:** {pair_row['sell_reason'] or 'N/A'}")
-        st.write(f"**Buy Time:** {pd.Timestamp(pair_row['buy_time']).strftime('%Y-%m-%d %H:%M')}")
-        st.write(f"**H4 Stop Time:** {pd.Timestamp(pair_row.get('rr_stop_loss_time', pair_row['buy_time'])).strftime('%Y-%m-%d %H:%M')}")
-        st.write(f"**W1 Target Time:** {pd.Timestamp(pair_row.get('rr_take_profit_time', pair_row['buy_time'])).strftime('%Y-%m-%d %H:%M')}")
-        st.write(f"**H4 Stop Price:** {float(pair_row.get('rr_stop_loss_price', float('nan'))):,.2f}")
-        st.write(f"**W1 Target Price:** {float(pair_row.get('rr_take_profit_price', float('nan'))):,.2f}")
+        # 顯示三大亮點指標
+        metric_col1, metric_col2 = st.columns(2)
+        with metric_col1:
+            st.metric("Profit %", f"{pair_row['profit_pct']*100:+.2f}%")
+        with metric_col2:
+            st.metric("PnL (TWD)", f"{pair_row['pnl']:+.2f}")
+        st.metric("RL Agent Reward", f"{float(pair_row.get('training_reward', pair_row['profit_pct'] * 100.0)):+.2f}")
 
+        # 詳細買賣與風報比數值卡片
+        with st.container(border=True):
+            st.markdown("**📌 Position Execution Details**")
+            st.write(f"**Buy Price:** {pair_row['buy_price']:,.2f} TWD")
+            st.write(f"**Sell Price:** {pair_row['sell_price']:,.2f} TWD")
+            st.write(f"**H4 Stop Price:** {float(pair_row.get('rr_stop_loss_price', float('nan'))):,.2f}")
+            st.write(f"**W1 Target Price:** {float(pair_row.get('rr_take_profit_price', float('nan'))):,.2f}")
+            st.write(f"**R:R Basis:** {pair_row.get('rr_basis', 'N/A')}")
+            st.caption(f"**Buy Reason:** {pair_row['buy_reason']}")
+            st.caption(f"**Sell Reason:** {pair_row['sell_reason']}")
+
+        # 稽核審查儲存
         review_state = st.radio("Was this trade correct?", ["Correct", "Wrong", "Unclear"], horizontal=True, key=f"review_state_{selected_pair_id}")
-        review_note = st.text_area("Review Note", key=f"review_note_{selected_pair_id}")
+        review_note = st.text_area("Review Note", key=f"review_note_{selected_pair_id}", placeholder="輸入您對此交易的人工覆核意見...")
         if st.button("Save Review", key=f"save_review_{selected_pair_id}", use_container_width=True):
             append_trade_review(reviews_path, {
                 "pair_id": int(pair_row["pair_id"]),
@@ -907,16 +925,32 @@ def render_trade_analysis():
                 "is_correct": review_state,
                 "review_note": review_note,
             })
-            st.success("Review saved.")
+            st.success("Review saved successfully.")
 
+    # ────────────────────────────────────────────────────────
+    # 左邊欄位：Plotly 蠟燭圖表與控制面版
+    # ────────────────────────────────────────────────────────
     with col_chart:
         selected_pair = pairs_df[pairs_df["pair_id"] == st.session_state["selected_trade_pair_id"]].iloc[0]
-        timeframe = st.selectbox("Chart Timeframe", ["W1", "D1", "H4", "H1"], index=3, key="pair_chart_timeframe")
-        overlay_old = st.checkbox("Old High/Low", value=True, key="pair_overlay_old")
-        overlay_ob = st.checkbox("Order Blocks", value=True, key="pair_overlay_ob")
-        overlay_fvg = st.checkbox("FVG", value=True, key="pair_overlay_fvg")
-        overlay_liq = st.checkbox("Liquidity Sweeps", value=True, key="pair_overlay_liq")
-        show_rr = st.checkbox("Show RRR Range", value=True, key="pair_show_rr")
+        
+        # 橫向控制開關 (Premium SaaS Dashboard 風格)
+        col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns([1.2, 1.0, 1.0, 1.0, 1.0])
+        with col_c1:
+            timeframe = st.selectbox("Chart Timeframe", ["W1", "D1", "H4", "H1"], index=3, key="pair_chart_timeframe")
+        with col_c2:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            show_rr = st.checkbox("Show RRR Range", value=True, key="pair_show_rr")
+        with col_c3:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            overlay_ob = st.checkbox("Order Blocks", value=True, key="pair_overlay_ob")
+        with col_c4:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            overlay_fvg = st.checkbox("FVG", value=True, key="pair_overlay_fvg")
+        with col_c5:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            overlay_liq = st.checkbox("Sweeps", value=True, key="pair_overlay_liq")
+
+        overlay_old = st.checkbox("Show Old High/Low", value=True, key="pair_overlay_old")
 
         tf_rule = {"W1": "1W", "D1": "1D", "H4": "4h", "H1": "1h"}[timeframe]
         chart_source = raw_df.copy()
@@ -941,7 +975,7 @@ def render_trade_analysis():
 
         entry_price = float(selected_pair["buy_price"])
         n_window = st.slider(
-            "Price Window (+/- N)",
+            "Price Window (+/- TWD)",
             min_value=10.0,
             max_value=1000.0,
             value=max(min(entry_price * 0.08, 1000.0), 10.0),
@@ -1085,6 +1119,94 @@ def render_trade_analysis():
         fig.update_xaxes(range=[t_start, t_end])
         fig.update_yaxes(range=[y_min, y_max])
         st.plotly_chart(fig, use_container_width=True)
+
+    # ────────────────────────────────────────────────────────
+    # 下方全寬區域：Trading Journal & AI Discussion 留言板
+    # ────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📔 Trading Journal & AI Discussion")
+
+    col_journal_exp, col_journal_thread = st.columns([1, 2])
+    with col_journal_exp:
+        with st.container(border=True):
+            st.markdown("#### 💡 SMC × DRL Core Logic")
+            st.markdown(f"""
+            * **移動停損停利 (Trailing Exits)**: 此環境採用動態時框計算出的停損與停利點 (`h4_rr_stop_loss_price` / `w1_rr_take_profit_price`)，因此出場門檻會隨行情推移呈**移動追蹤**態勢。
+            * **DQN 長期預期回報勝出 (Expected Q-Value Overrides Bias)**: DQN 智能體以最大化長期投資組合價值為目標。即便當時的週線/日線趨勢偏向為空頭 (`-1`)，智能體若選擇 100% 持倉，代表它透過深度學習網絡計算出此處為**高勝率折價區/清算區**，具備極高的期望收益率。
+            """)
+            
+    with col_journal_thread:
+        # Helper to load and save trading journals
+        def load_trade_journal() -> dict:
+            import json
+            journal_path = Config().outputs_dir / "trade_journal.json"
+            if not journal_path.exists():
+                return {}
+            try:
+                return json.loads(journal_path.read_text(encoding="utf-8"))
+            except Exception:
+                return {}
+
+        def save_trade_journal(data: dict) -> None:
+            import json
+            journal_path = Config().outputs_dir / "trade_journal.json"
+            journal_path.parent.mkdir(parents=True, exist_ok=True)
+            journal_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        # 讀取當前交易對討論紀錄
+        journal_db = load_trade_journal()
+        pair_key = str(selected_pair_id)
+        thread = journal_db.setdefault(pair_key, [])
+
+        # 顯示歷史對話
+        if thread:
+            st.markdown("**討論歷程 (Journal Logs):**")
+            for msg in thread:
+                author = msg.get("author", "User")
+                time_str = msg.get("timestamp", "")
+                content = msg.get("content", "")
+                if author == "User":
+                    st.markdown(f"**🧑‍💻 User** ({time_str}):  \n{content}")
+                else:
+                    st.markdown(f"**🤖 AI Quant Coach** ({time_str}):  \n{content}")
+                st.markdown("<hr style='margin: 0.5em 0; border: 0.5px solid #f0f2f6;'>", unsafe_allow_html=True)
+        else:
+            st.caption("尚無歷史討論筆記，您可以在下方輸入問題或心得開始記錄日誌！")
+
+        # 留言文字輸入框與按鈕
+        user_comment = st.text_area("新增日誌心得 / 向 AI 提問", key=f"journal_input_{selected_pair_id}", placeholder="例如：為什麼智能體會在此建倉？...", height=100)
+        if st.button("提交討論日誌", key=f"submit_journal_{selected_pair_id}", use_container_width=True):
+            if user_comment.strip():
+                from datetime import datetime
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                # 新增使用者留言
+                user_msg = {"timestamp": now_str, "author": "User", "content": user_comment}
+                thread.append(user_msg)
+                
+                # 調用 AI 討論回覆
+                with st.spinner("AI 導師正在深入剖析交易邏輯..."):
+                    pair_info = {
+                        "ticker": pair_row.get("ticker", st.session_state.get("ticker", "")),
+                        "buy_time": str(pd.Timestamp(pair_row["buy_time"])),
+                        "sell_time": str(pd.Timestamp(pair_row["sell_time"])),
+                        "buy_price": float(pair_row["buy_price"]),
+                        "sell_price": float(pair_row["sell_price"]),
+                        "profit_pct": float(pair_row["profit_pct"]),
+                        "rr_stop_loss_price": float(pair_row.get("rr_stop_loss_price", float("nan"))),
+                        "rr_take_profit_price": float(pair_row.get("rr_take_profit_price", float("nan"))),
+                        "rr_basis": pair_row.get("rr_basis", ""),
+                        "buy_reason": pair_row.get("buy_reason", ""),
+                        "sell_reason": pair_row.get("sell_reason", ""),
+                    }
+                    ai_reply_content = generate_journal_ai_reply(pair_info, user_comment, thread[:-1])
+                    ai_msg = {"timestamp": now_str, "author": "AI Quant Coach", "content": ai_reply_content}
+                    thread.append(ai_msg)
+                    
+                # 儲存更新後的歷程
+                journal_db[pair_key] = thread
+                save_trade_journal(journal_db)
+                st.success("日誌已更新！")
+                st.rerun()
 
 
 def _render_log_html(log_messages):
@@ -1741,7 +1863,7 @@ def main():
             strategy_label = st.selectbox(
                 "Trading Strategy",
                 [item["label"] for item in STRATEGY_CHOICES],
-                index=0,
+                index=2,
                 key="report_strategy_mode",
             )
             strategy_meta = next(item for item in STRATEGY_CHOICES if item["label"] == strategy_label)
@@ -1761,9 +1883,9 @@ def main():
                 st.caption(f"Selected Strategy: {strategy_label}")
                 train_mode_col1, train_mode_col2, train_mode_col3 = st.columns([1.1, 1.0, 1.0])
                 with train_mode_col1:
-                    train_mode = st.selectbox("Training Mode", ["Fixed Epochs", "Early Stop"], index=0, key="report_train_mode")
+                    train_mode = st.selectbox("Training Mode", ["Fixed Epochs", "Early Stop"], index=1, key="report_train_mode")
                 with train_mode_col2:
-                    episodes_override = st.number_input("Epochs", min_value=10, max_value=5000, value=int(getattr(cfg, "episodes", 1000)), step=10, key="report_train_episodes")
+                    episodes_override = st.number_input("Epochs", min_value=10, max_value=5000, value=int(getattr(cfg, "episodes", 50)), step=10, key="report_train_episodes")
                 with train_mode_col3:
                     early_stop_patience = st.number_input("Patience", min_value=5, max_value=500, value=50, step=5, key="report_early_stop_patience")
                 rr_threshold_col1, rr_threshold_col2 = st.columns([1.0, 1.0])
