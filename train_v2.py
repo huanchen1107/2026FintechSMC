@@ -53,9 +53,10 @@ def run_episode(env: MTFTradingEnvV2, agent: DQNAgent, training: bool = True, pr
             if rr_valid and rr_ratio >= rr_threshold:
                 agent.replay_buffer.push(state, action, reward, next_state, done)
                 if progress_callback:
-                    progress_callback(
-                        f"Replay Buffer +1 | size={len(agent.replay_buffer)} | rr={rr_ratio:.2f} | threshold={rr_threshold:.2f}"
-                    )
+                    progress_callback({
+                        "type": "buffer_update",
+                        "message": f"Replay Buffer +1 | size={len(agent.replay_buffer)} | rr={rr_ratio:.2f} | threshold={rr_threshold:.2f}"
+                    })
             loss = agent.update()
             if loss is not None:
                 losses.append(loss)
@@ -131,7 +132,11 @@ def train_agent(
         )
         print(log_line)
         if progress_callback:
-            progress_callback(log_line)
+            progress_callback({
+                "type": "epoch_complete",
+                "message": log_line,
+                "log": log
+            })
 
         if early_stop_enabled and stale_epochs >= early_stop_patience:
             stop_line = (
@@ -140,7 +145,10 @@ def train_agent(
             )
             print(stop_line)
             if progress_callback:
-                progress_callback(stop_line)
+                progress_callback({
+                    "type": "early_stop",
+                    "message": stop_line
+                })
             break
 
     if best_state_dict is not None:
@@ -169,7 +177,10 @@ def run_training_pipeline_v2(
     test_df = apply_standardizer(test_df, FEATURE_COLUMNS, feature_mean, feature_std)
 
     if progress_callback:
-        progress_callback(f"Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)}")
+        progress_callback({
+            "type": "info",
+            "message": f"Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)}"
+        })
 
     # 3. Train
     agent, logs_df = train_agent(train_df, val_df, cfg, progress_callback)

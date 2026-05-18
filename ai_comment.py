@@ -185,6 +185,8 @@ def generate_ai_comment(recommendation: dict, metrics: dict) -> str:
             try:
                 err_text = e.response.text
                 logger.error(f"OpenRouter API Error: {err_text}")
+                if e.response.status_code == 401:
+                    return "❌ **AI 討論回覆生成失敗：401 Unauthorized (金鑰已失效)**\n\n偵測到您的 `OPENROUTER_API_KEY` 或 `GEMINI_API_KEY` 已失效或被撤銷。\n\n**💡 解決方法：**\n1. 請前往 [Google AI Studio](https://aistudio.google.com/) 免費申請一個全新的 Gemini API 金鑰。\n2. 開啟專案根目錄的 `.env` 檔案，填入：\n   `GEMINI_API_KEY=\"您的全新金鑰\"`\n3. 系統將會直接使用官方高速管道，完全免費、更穩定，且不再依賴 OpenRouter！"
                 return f"❌ AI 評語生成失敗：{e.response.status_code} - {err_text}"
             except Exception:
                 pass
@@ -265,6 +267,8 @@ def generate_journal_ai_reply(pair_info: dict, user_comment: str, history: list)
             try:
                 err_text = e.response.text
                 logger.error(f"OpenRouter API Error: {err_text}")
+                if e.response.status_code == 401:
+                    return "❌ **AI 討論回覆生成失敗：401 Unauthorized (金鑰已失效)**\n\n偵測到您的 `OPENROUTER_API_KEY` 或 `GEMINI_API_KEY` 已失效或被撤銷。\n\n**💡 解決方法：**\n1. 請前往 [Google AI Studio](https://aistudio.google.com/) 免費申請一個全新的 Gemini API 金鑰。\n2. 開啟專案根目錄的 `.env` 檔案，填入：\n   `GEMINI_API_KEY=\"您的全新金鑰\"`\n3. 系統將會直接使用官方高速管道，完全免費、更穩定，且不再依賴 OpenRouter！"
                 return f"❌ AI 討論回覆生成失敗：{e.response.status_code} - {err_text}"
             except Exception:
                 pass

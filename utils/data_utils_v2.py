@@ -222,7 +222,7 @@ def normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def download_ohlcv_basic(ticker, start=None, end=None, interval="1d", period=None):
+def download_ohlcv_basic(ticker, start=None, end=None, interval="1d", period=None, progress_callback=None):
     from config import Config
     import sqlite3
     db_path = Config().outputs_dir / "stock_cache.db"
@@ -265,6 +265,17 @@ def download_ohlcv_basic(ticker, start=None, end=None, interval="1d", period=Non
         if pd.to_datetime(dl_start) >= pd.to_datetime(end):
             need_download = False
 
+    # Force bypass yfinance for Taiwan stocks to avoid long timeout hangs from the yfinance timezone parsing bug
+    if ticker.endswith(".TW") and not cached_df.empty:
+        msg = f"Taiwan Stock detected. Bypassing yfinance and loading {ticker} ({interval}) directly from local database!"
+        print(msg)
+        if progress_callback:
+            try:
+                progress_callback(msg)
+            except Exception:
+                pass
+        need_download = False
+
     kwargs = {"tickers": ticker, "interval": interval, "auto_adjust": True, "progress": False, "threads": True}
     if period is not None:
         kwargs["period"] = period
@@ -275,12 +286,25 @@ def download_ohlcv_basic(ticker, start=None, end=None, interval="1d", period=Non
 
     new_df = pd.DataFrame()
     if need_download:
-        print(f"Downloading missing data for {ticker} ({interval})...")
+        msg = f"Downloading missing data for {ticker} ({interval}) from yfinance..."
+        print(msg)
+        if progress_callback:
+            try:
+                progress_callback(msg)
+            except Exception:
+                pass
         try:
             raw_new = yf.download(**kwargs)
             new_df = normalize_ohlcv_columns(raw_new)
             
             if not new_df.empty:
+                msg = f"Successfully downloaded {len(new_df)} rows for {ticker} ({interval}) from yfinance!"
+                print(msg)
+                if progress_callback:
+                    try:
+                        progress_callback(msg)
+                    except Exception:
+                        pass
                 save_df = new_df.copy()
                 save_df['ticker'] = ticker
                 save_df['interval'] = interval
@@ -307,15 +331,27 @@ def download_ohlcv_basic(ticker, start=None, end=None, interval="1d", period=Non
     return combined
 
 
-def download_ohlcv_with_fallback(ticker, start, end, interval, fallback_periods=("730d", "365d", "180d", "90d", "60d")):
-    print(f"Downloading {ticker}, interval={interval}, start={start}, end={end} ...")
+def download_ohlcv_with_fallback(ticker, start, end, interval, fallback_periods=("730d", "365d", "180d", "90d", "60d"), progress_callback=None):
+    msg = f"Checking local database cache for {ticker}, interval={interval}, start={start}, end={end} ..."
+    print(msg)
+    if progress_callback:
+        try:
+            progress_callback(msg)
+        except Exception:
+            pass
     try:
-        df = download_ohlcv_basic(ticker=ticker, start=start, end=end, interval=interval)
+        df = download_ohlcv_basic(ticker=ticker, start=start, end=end, interval=interval, progress_callback=progress_callback)
         if not df.empty:
-            print(f"Downloaded by start/end: rows={len(df)}, {df.index.min()} -> {df.index.max()}")
+            msg = f"Loaded {len(df)} rows of {interval} data from local database!"
+            print(msg)
+            if progress_callback:
+                try:
+                    progress_callback(msg)
+                except Exception:
+                    pass
             return df
     except Exception as e:
-        print(f"Start/end download failed: {e}")
+        print(f"Local database load failed: {e}")
 
     if interval.lower() in {"1h", "60m", "30m", "15m", "5m", "1m"}:
         alt_intervals = [interval]
@@ -930,10 +966,11 @@ def build_mtf_dataset(df_h1_raw, df_d1_raw, cfg):
 def download_and_build_mtf(cfg, progress_callback=None):
     """Download data and build full MTF dataset."""
     if progress_callback:
-        progress_callback("Downloading H1 data...")
+        progress_callback("Checking local database cache for H1 data...")
     df_h1_raw = download_ohlcv_with_fallback(
         ticker=cfg.ticker, start=cfg.start_date, end=cfg.end_date,
         interval=cfg.base_interval, fallback_periods=cfg.intraday_fallback_periods,
+        progress_callback=progress_callback
     )
     
     if df_h1_raw is None or len(df_h1_raw) == 0:
@@ -943,10 +980,11 @@ def download_and_build_mtf(cfg, progress_callback=None):
     daily_end = str((df_h1_raw.index.max() + pd.Timedelta(days=2)).date())
 
     if progress_callback:
-        progress_callback("Downloading D1 data...")
+        progress_callback("Checking local database cache for D1 data...")
     df_d1_raw = download_ohlcv_with_fallback(
         ticker=cfg.ticker, start=daily_start, end=daily_end,
         interval="1d", fallback_periods=("10y", "5y", "2y", "1y"),
+        progress_callback=progress_callback
     )
 
     # ── W1 歷史資料預檢（快速失敗，避免等完整 MTF 計算後才報錯）──

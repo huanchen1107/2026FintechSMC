@@ -7,6 +7,7 @@ let chartData = [];
 let selectedPairId = null;
 let chartInstance = null;
 let candlestickSeries = null;
+let currentChartInterval = "1h";
 
 // DOM Elements
 const modelSelector = document.getElementById("model-selector");
@@ -53,20 +54,20 @@ function initChart() {
     chartInstance = LightweightCharts.createChart(chartElement, {
         layout: {
             background: { type: 'solid', color: 'transparent' },
-            textColor: '#94a3b8',
+            textColor: '#475569',
         },
         grid: {
-            vertLines: { color: 'rgba(255, 255, 255, 0.02)' },
-            horzLines: { color: 'rgba(255, 255, 255, 0.02)' },
+            vertLines: { color: 'rgba(0, 0, 0, 0.05)' },
+            horzLines: { color: 'rgba(0, 0, 0, 0.05)' },
         },
         crosshair: {
             mode: LightweightCharts.CrosshairMode.Normal,
         },
         rightPriceScale: {
-            borderColor: 'rgba(255, 255, 255, 0.08)',
+            borderColor: 'rgba(0, 0, 0, 0.1)',
         },
         timeScale: {
-            borderColor: 'rgba(255, 255, 255, 0.08)',
+            borderColor: 'rgba(0, 0, 0, 0.1)',
             timeVisible: true,
             secondsVisible: false,
         },
@@ -151,7 +152,7 @@ async function loadDashboardData() {
         }
 
         // B. Load Chart Candlesticks
-        const chartResp = await fetch("/api/chart_data");
+        const chartResp = await fetch(`/api/chart_data?interval=${currentChartInterval}`);
         const chartJson = await chartResp.json();
         chartData = chartJson.ohlcv || [];
         if (candlestickSeries && chartData.length > 0) {
@@ -166,6 +167,11 @@ async function loadDashboardData() {
         
         renderPositionsList();
         renderAllChartMarkers();
+        
+        // Auto-select the first completed position card on load/evaluate to prevent empty placeholder states
+        if (tradePairs.length > 0) {
+            selectTradePosition(tradePairs[0].pair_id);
+        }
     } catch (e) {
         console.error("Error loading dashboard metrics/data:", e);
         showToast("Error reloading model metrics", true);
@@ -237,7 +243,13 @@ function renderAllChartMarkers() {
 
     // Sort markers chronologically by epoch seconds
     markers.sort((a, b) => a.time - b.time);
-    candlestickSeries.setMarkers(markers);
+    if (typeof candlestickSeries.setMarkers === 'function') {
+        candlestickSeries.setMarkers(markers);
+    } else if (typeof LightweightCharts.createSeriesMarkers === 'function') {
+        LightweightCharts.createSeriesMarkers(candlestickSeries, markers);
+    } else {
+        console.warn("setMarkers is not functional under this library version");
+    }
 }
 
 // 6. Select a Trading Pair position
@@ -461,7 +473,7 @@ saveReviewBtn.addEventListener("click", saveAuditReview);
 
 // Theme Toggle Logic
 const themeToggleBtn = document.getElementById("theme-toggle");
-let currentTheme = "dark";
+let currentTheme = "light";
 
 themeToggleBtn.addEventListener("click", () => {
     currentTheme = currentTheme === "dark" ? "light" : "dark";
@@ -493,21 +505,15 @@ themeToggleBtn.addEventListener("click", () => {
 });
 
 // Pipeline Modal Logic
-const pipelineBtn = document.getElementById("open-pipeline-btn");
-const pipelineModal = document.getElementById("pipeline-modal");
-const closePipelineBtn = document.getElementById("close-pipeline-btn");
-const runPipelineBtn = document.getElementById("run-pipeline-btn");
+const advancedToggle = document.getElementById("advanced-toggle");
+const advancedPanel = document.getElementById("advanced-settings-panel");
+if (advancedToggle && advancedPanel) { 
+    advancedToggle.addEventListener("change", (e) => { 
+        advancedPanel.style.display = e.target.checked ? "block" : "none"; 
+    }); 
+}
 
-if (pipelineBtn) {
-    pipelineBtn.addEventListener("click", () => {
-        pipelineModal.classList.add("show");
-    });
-}
-if (closePipelineBtn) {
-    closePipelineBtn.addEventListener("click", () => {
-        pipelineModal.classList.remove("show");
-    });
-}
+const runPipelineBtn = document.getElementById("run-pipeline-btn");
 if (runPipelineBtn) {
     runPipelineBtn.addEventListener("click", async () => {
         const ticker = document.getElementById("pipe-ticker").value;
@@ -522,21 +528,40 @@ if (runPipelineBtn) {
             return;
         }
 
-        pipelineModal.classList.remove("show");
-        showToast("Training pipeline started. This may take several minutes...");
+        runPipelineBtn.innerHTML = "<i class='fa-solid fa-spinner fa-spin'></i> Training in Background...";
+        runPipelineBtn.disabled = true;
+        
+        // Start background polling and flag session
+        window.hasTrainedThisSession = true;
+        const widget = document.getElementById("training-monitor-widget");
+        if (widget) widget.style.display = "block";
+        if (typeof trainingPollInterval !== 'undefined') {
+            clearInterval(trainingPollInterval);
+        }
+        trainingPollInterval = setInterval(pollTrainingStatus, 2000);
 
         try {
+            const isAdvanced = advancedToggle ? advancedToggle.checked : false;
+            const payload = {
+                ticker: ticker,
+                start_date: start,
+                end_date: end,
+                strategy_mode: strategy,
+                episodes: episodes,
+                early_stop_patience: patience
+            };
+            
+            if (isAdvanced) {
+                payload.lr = parseFloat(document.getElementById("pipe-lr").value) || 0.0001;
+                payload.batch_size = parseInt(document.getElementById("pipe-batch-size").value) || 64;
+                payload.gamma = parseFloat(document.getElementById("pipe-gamma").value) || 0.95;
+                payload.state_lookback = parseInt(document.getElementById("pipe-lookback").value) || 100;
+            }
+
             const resp = await fetch("/api/run_pipeline", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    ticker: ticker,
-                    start_date: start,
-                    end_date: end,
-                    strategy_mode: strategy,
-                    episodes: episodes,
-                    early_stop_patience: patience
-                })
+                body: JSON.stringify(payload)
             });
 
             const data = await resp.json();
@@ -552,7 +577,103 @@ if (runPipelineBtn) {
         } catch (err) {
             console.error("Pipeline request error", err);
             showToast("Network error starting pipeline.", true);
+        } finally {
+            runPipelineBtn.innerHTML = "Initialize DRL Agent";
+            runPipelineBtn.disabled = false;
+            const globalLoader = document.getElementById("global-loader");
+            if (globalLoader) globalLoader.style.display = "none";
         }
+    });
+}
+
+
+
+
+// Page & Tab Switching Logic
+const tabBtns = document.querySelectorAll(".tab-btn");
+const originalGrid = document.querySelector(".original-grid");
+const pageStep0 = document.getElementById("page-step0");
+const pageStep1 = document.getElementById("page-step1");
+const appHeader = document.querySelector(".app-header");
+const metricsRow = document.querySelector(".metrics-row");
+
+const colLeft = document.querySelector(".col-left");
+const colRight = document.querySelector(".col-right");
+const chartContainer = document.querySelector(".chart-container");
+const coachCol = document.querySelector(".coach-col");
+const positionsContainer = document.querySelector(".positions-container");
+const parametersCol = document.querySelector(".parameters-col");
+
+if (coachCol) coachCol.style.display = "none";
+if (parametersCol) parametersCol.style.display = "none";
+
+function switchTab(target) {
+    tabBtns.forEach(b => {
+        if(b.getAttribute("data-tab") === target) {
+            b.classList.add("active");
+            b.style.background = "rgba(139, 92, 246, 0.15)";
+            b.style.borderColor = "rgba(139, 92, 246, 0.5)";
+            b.style.color = "var(--neon-purple)";
+        } else {
+            b.classList.remove("active");
+            b.style.background = "transparent";
+            b.style.borderColor = "transparent";
+            b.style.color = "var(--text-muted)";
+        }
+    });
+    
+    // Hide all main sections first
+    if(originalGrid) originalGrid.style.display = "none";
+    if(pageStep0) pageStep0.style.display = "none";
+    if(pageStep1) pageStep1.style.display = "none";
+    if(appHeader) appHeader.style.display = "none";
+    if(metricsRow) metricsRow.style.display = "none";
+    
+    if (target === "step0") {
+        if(pageStep0) pageStep0.style.display = "flex";
+    } else if (target === "step1") {
+        if(pageStep1) pageStep1.style.display = "flex";
+    } else if (target === "step2") {
+        if(appHeader) appHeader.style.display = "flex";
+        if(metricsRow) metricsRow.style.display = "grid";
+        if(originalGrid) originalGrid.style.display = ""; 
+        colLeft.style.display = "";
+        colRight.style.display = "";
+        chartContainer.style.display = "";
+        positionsContainer.style.display = "";
+        coachCol.style.display = "none";
+        parametersCol.style.display = "none";
+        if(chartInstance) setTimeout(() => { chartInstance.resize(chartContainer.clientWidth, chartContainer.clientHeight); chartInstance.timeScale().fitContent(); }, 100);
+    } else if (target === "step3") {
+        if(appHeader) appHeader.style.display = "flex";
+        if(metricsRow) metricsRow.style.display = "grid";
+        if(originalGrid) originalGrid.style.display = "block";
+        colLeft.style.display = "block";
+        colRight.style.display = "none";
+        chartContainer.style.display = "none";
+        coachCol.style.display = "flex";
+        coachCol.style.height = "80vh"; 
+    } else if (target === "step4") {
+        if(appHeader) appHeader.style.display = "flex";
+        if(metricsRow) metricsRow.style.display = "grid";
+        if(originalGrid) originalGrid.style.display = "block";
+        colLeft.style.display = "none";
+        colRight.style.display = "block";
+        positionsContainer.style.display = "none";
+        parametersCol.style.display = "flex";
+    }
+}
+
+tabBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+        switchTab(btn.getAttribute("data-tab"));
+    });
+});
+
+const nextStepBtn = document.getElementById("next-to-step1");
+if(nextStepBtn) {
+    nextStepBtn.addEventListener("click", () => {
+        switchTab("step1");
     });
 }
 
@@ -581,8 +702,209 @@ if (fullscreenChartBtn && chartContainerElement) {
     });
 }
 
+// Timeframe Interval Switching Logic
+const btnInterval1h = document.getElementById("btn-interval-1h");
+const btnInterval4h = document.getElementById("btn-interval-4h");
+const btnInterval1d = document.getElementById("btn-interval-1d");
+const btnInterval1w = document.getElementById("btn-interval-1w");
+const chartTitleText = document.getElementById("chart-title-text");
+
+const intervalButtons = [
+    { btn: btnInterval1h, interval: "1h", label: "1H" },
+    { btn: btnInterval4h, interval: "4h", label: "4H" },
+    { btn: btnInterval1d, interval: "1d", label: "1D" },
+    { btn: btnInterval1w, interval: "1w", label: "1W" }
+];
+
+intervalButtons.forEach(item => {
+    if (item.btn) {
+        item.btn.addEventListener("click", async () => {
+            if (currentChartInterval === item.interval) return;
+            currentChartInterval = item.interval;
+            
+            // Apply cohesive premium glassmorphic styling states
+            intervalButtons.forEach(inner => {
+                if (inner.btn) {
+                    if (inner.interval === currentChartInterval) {
+                        inner.btn.classList.add("active");
+                        inner.btn.style.background = "var(--neon-purple)";
+                        inner.btn.style.color = "white";
+                    } else {
+                        inner.btn.classList.remove("active");
+                        inner.btn.style.background = "transparent";
+                        inner.btn.style.color = "var(--text-muted)";
+                    }
+                }
+            });
+            
+            if (chartTitleText) {
+                chartTitleText.innerHTML = `<i class="fa-solid fa-chart-candlestick"></i> Interday Candlestick Feed (${item.label})`;
+            }
+            
+            // Reload chart data
+            await refreshChartOnly();
+        });
+    }
+});
+
+async function refreshChartOnly() {
+    try {
+        const globalLoader = document.getElementById("global-loader");
+        if (globalLoader) globalLoader.style.display = "flex";
+        
+        const chartResp = await fetch(`/api/chart_data?interval=${currentChartInterval}`);
+        const chartJson = await chartResp.json();
+        chartData = chartJson.ohlcv || [];
+        if (candlestickSeries && chartData.length > 0) {
+            candlestickSeries.setData(chartData);
+            chartInstance.timeScale().fitContent();
+        }
+        
+        // Re-render chart markers (arrows) on the new candles!
+        renderAllChartMarkers();
+        
+        if (globalLoader) globalLoader.style.display = "none";
+    } catch (err) {
+        console.error("Error refreshing interval chart:", err);
+        showToast("Error loading candlestick timeframe", true);
+    }
+}
+
 // Bootloader
 window.addEventListener("load", () => {
+    // Set dynamic default dates for Pipeline Modal (Max 730d limit for 1h interval)
+    const endDateInput = document.getElementById("pipe-end");
+    const startDateInput = document.getElementById("pipe-start");
+    if (endDateInput && startDateInput) {
+        const today = new Date();
+        const offset = today.getTimezoneOffset() * 60000;
+        const localToday = new Date(today.getTime() - offset);
+        
+        const localPast = new Date(localToday);
+        localPast.setDate(localToday.getDate() - 729); 
+        
+        endDateInput.value = localToday.toISOString().split('T')[0];
+        startDateInput.value = localPast.toISOString().split('T')[0];
+    }
+
     initChart();
     loadModels();
 });
+
+
+const openPipelineSidebarBtn = document.getElementById("open-pipeline-sidebar-btn");
+if(openPipelineSidebarBtn) {
+    openPipelineSidebarBtn.addEventListener("click", () => {
+        switchTab("step0");
+    });
+}
+
+
+// Live Training Status Poller
+let liveChartInstance = null;
+let liveLossSeries = null;
+
+async function pollTrainingStatus() {
+    try {
+        const res = await fetch("/api/training_status");
+        if(!res.ok) return;
+        const data = await res.json();
+        
+        const widget = document.getElementById("training-monitor-widget");
+        if(!widget) return;
+        
+        // Quietly terminate polling and hide widget on load if not currently training
+        if (!data.is_training && !window.hasTrainedThisSession) {
+            widget.style.display = "none";
+            if (typeof trainingPollInterval !== 'undefined') {
+                clearInterval(trainingPollInterval);
+            }
+            return;
+        }
+        
+        if (data.is_training || (data.logs && data.logs.length > 0)) {
+            widget.style.display = "block";
+            document.getElementById("training-ticker-badge").textContent = data.ticker || "RUNNING";
+            
+            if (!liveChartInstance) {
+                liveChartInstance = LightweightCharts.createChart(document.getElementById("training-chart-container"), {
+                    layout: { backgroundColor: "transparent", textColor: "#9ca3af" },
+                    grid: { vertLines: { color: "rgba(255,255,255,0.05)" }, horzLines: { color: "rgba(255,255,255,0.05)" } },
+                    rightPriceScale: { borderVisible: false },
+                    timeScale: { borderVisible: false, timeVisible: true }
+                });
+                
+                if (typeof liveChartInstance.addLineSeries === 'function') {
+                    liveLossSeries = liveChartInstance.addLineSeries({ color: "#ef4444", lineWidth: 2 });
+                } else {
+                    liveLossSeries = liveChartInstance.addSeries(LightweightCharts.LineSeries, { color: "#ef4444", lineWidth: 2 });
+                }
+            }
+            
+            if (data.logs && data.logs.length > 0) {
+                const latestLog = data.logs[data.logs.length - 1];
+                const lossVal = (latestLog.avg_loss !== null && latestLog.avg_loss !== undefined) ? latestLog.avg_loss.toFixed(5) : "Building Buffer...";
+                const totalN = data.total_episodes || 50;
+                document.getElementById("training-status-text").innerHTML = `<b>Epoch ${latestLog.episode} / ${totalN}</b> | Loss: ${lossVal} | Train Ret: ${(latestLog.train_return*100).toFixed(2)}% | Val Ret: ${(latestLog.val_return*100).toFixed(2)}%`;
+                
+                const baseTime = 1700000000;
+                const chartData = data.logs.map(log => ({
+                    time: baseTime + log.episode * 3600, // 1 hour step per epoch fake time
+                    value: log.avg_loss || 0
+                }));
+                
+                if (liveLossSeries && typeof liveLossSeries.setData === 'function') {
+                    liveLossSeries.setData(chartData);
+                }
+                if (liveChartInstance) {
+                    liveChartInstance.timeScale().fitContent();
+                }
+            } else {
+                if (data.ingestion_logs && data.ingestion_logs.length > 0) {
+                    const latestIngest = data.ingestion_logs[data.ingestion_logs.length - 1];
+                    document.getElementById("training-status-text").innerHTML = `<span style="font-size: 11px; color: var(--neon-cyan);"><i class="fa-solid fa-database"></i> ${latestIngest}</span>`;
+                } else {
+                    document.getElementById("training-status-text").textContent = "Checking local database & loading feed...";
+                }
+            }
+            
+            if (!data.is_training && data.logs.length > 0) {
+                if (!document.getElementById("dismiss-monitor")) {
+                    const dismissBtn = document.createElement("button");
+                    dismissBtn.id = "dismiss-monitor";
+                    dismissBtn.innerHTML = "<i class='fa-solid fa-xmark'></i> Close";
+                    dismissBtn.style.cssText = "background: rgba(255,255,255,0.1); border: none; color: white; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-left: 8px;";
+                    dismissBtn.onclick = () => { widget.style.display = "none"; };
+                    document.getElementById("training-ticker-badge").parentElement.appendChild(dismissBtn);
+                }
+                
+                document.getElementById("training-status-text").innerHTML = `
+                    <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+                        <span style="color: #10b981; font-weight: 700; font-size: 13px;"><i class="fa-solid fa-circle-check"></i> Training Completed!</span>
+                        <p style="font-size: 11px; color: var(--text-muted); margin: 0; line-height: 1.4;">The agent model has been fully saved. Click below to proceed to evaluations.</p>
+                        <button class="action-btn" id="go-to-evaluation-btn" style="background: linear-gradient(135deg, var(--neon-purple), var(--neon-blue)); border: none; color: white; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3); transition: all 0.2s;">
+                            Proceed to Step 2: Evaluation <i class="fa-solid fa-arrow-right"></i>
+                        </button>
+                    </div>
+                `;
+                
+                const goBtn = document.getElementById("go-to-evaluation-btn");
+                if (goBtn) {
+                    goBtn.onclick = () => {
+                        widget.style.display = "none";
+                        switchTab("step2");
+                    };
+                }
+                
+                // Epoch complete! Terminate active background polling to keep browser clean
+                if (typeof trainingPollInterval !== 'undefined') {
+                    clearInterval(trainingPollInterval);
+                }
+            }
+        }
+    } catch(err) {
+        console.error("Polling error", err);
+    }
+}
+
+let trainingPollInterval = setInterval(pollTrainingStatus, 2000);

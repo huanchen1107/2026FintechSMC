@@ -37,6 +37,7 @@ app.add_middleware(
 # Global in-memory cache for evaluation outputs
 global_eval_data = {
     "model_id": None,
+    "ticker": "2330.TW",
     "pairs": [],
     "metrics": {},
     "raw_ohlcv": [],
@@ -60,6 +61,10 @@ class RunPipelineRequest(BaseModel):
     strategy_mode: str
     episodes: int
     early_stop_patience: int
+    lr: Optional[float] = None
+    batch_size: Optional[int] = None
+    gamma: Optional[float] = None
+    state_lookback: Optional[int] = None
 
 def serialize_trade_pair(pair) -> dict:
     """Safely serialize trade pair fields to standard JSON types."""
@@ -150,6 +155,7 @@ def run_evaluation_for_model(model_id: str) -> bool:
             global_eval_data["raw_ohlcv"] = []
 
         global_eval_data["model_id"] = model_id
+        global_eval_data["ticker"] = selected_meta.get("ticker", "2330.TW")
         logger.info("Dynamic model evaluation completed successfully.")
         return True
     except Exception as e:
@@ -183,29 +189,175 @@ async def select_model(payload: SelectModelRequest):
         raise HTTPException(status_code=404, detail="Failed to load or evaluate model.")
     return {"status": "success", "model_id": payload.model_id}
 
+def sanitize_data(obj):
+    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    elif isinstance(obj, dict):
+        return {k: sanitize_data(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_data(v) for v in obj]
+    return obj
+
 @app.get("/api/trade_pairs")
 async def get_trade_pairs():
     """Fetch complete reconstructed buying/selling trade pairs."""
-    return JSONResponse(content={
+    return JSONResponse(content=sanitize_data({
         "model_id": global_eval_data["model_id"],
         "pairs": global_eval_data["pairs"]
-    })
+    }))
 
 @app.get("/api/chart_data")
-async def get_chart_data():
-    """Fetch epoch-second standard hourly candlestick data for the charting container."""
-    return JSONResponse(content={
+async def get_chart_data(interval: str = "1h"):
+    """Fetch epoch-second standard hourly, 4-hour, daily, or weekly candlestick data."""
+    interval_clean = interval.lower()
+    
+    if interval_clean == "4h":
+        # Resample H1 data locally in-memory
+        if not global_eval_data["raw_ohlcv"]:
+            return JSONResponse(content={"model_id": global_eval_data["model_id"], "ohlcv": []})
+        try:
+            df = pd.DataFrame(global_eval_data["raw_ohlcv"])
+            df["datetime"] = pd.to_datetime(df["time"], unit="s")
+            df.set_index("datetime", inplace=True)
+            resampled = df.resample("4h").agg({
+                "open": "first",
+                "high": "max",
+                "low": "min",
+                "close": "last",
+                "volume": "sum"
+            }).dropna()
+            
+            ohlcv = []
+            for dt, row in resampled.iterrows():
+                ohlcv.append({
+                    "time": int(dt.timestamp()),
+                    "open": float(row["open"]),
+                    "high": float(row["high"]),
+                    "low": float(row["low"]),
+                    "close": float(row["close"]),
+                    "volume": float(row["volume"])
+                })
+            return JSONResponse(content=sanitize_data({
+                "model_id": global_eval_data["model_id"],
+                "interval": "4h",
+                "ohlcv": ohlcv
+            }))
+        except Exception as e:
+            logger.error(f"Error resampling 4h ohlcv: {e}")
+            return JSONResponse(content={"model_id": global_eval_data["model_id"], "ohlcv": []})
+
+    elif interval_clean in ["1w", "1wk", "w"]:
+        # Fetch D1 data from SQLite, then resample to weekly W-MON
+        import sqlite3
+        from config import Config
+        db_path = Config().outputs_dir / "stock_cache.db"
+        ticker = global_eval_data.get("ticker") or "2330.TW"
+        daily_ohlcv = []
+        if db_path.exists():
+            try:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT datetime, open, high, low, close, volume FROM stock_data WHERE ticker=? AND interval=? ORDER BY datetime ASC",
+                    (ticker, "1d")
+                )
+                rows = cursor.fetchall()
+                for row in rows:
+                    daily_ohlcv.append({
+                        "datetime": row[0],
+                        "open": float(row[1]),
+                        "high": float(row[2]),
+                        "low": float(row[3]),
+                        "close": float(row[4]),
+                        "volume": float(row[5])
+                    })
+                conn.close()
+            except Exception as e:
+                logger.error(f"Error fetching daily ohlcv from cache for weekly resample: {e}")
+        
+        if not daily_ohlcv:
+            return JSONResponse(content={"model_id": global_eval_data["model_id"], "ohlcv": []})
+        
+        try:
+            df = pd.DataFrame(daily_ohlcv)
+            df["datetime"] = pd.to_datetime(df["datetime"])
+            df.set_index("datetime", inplace=True)
+            resampled = df.resample("W-MON").agg({
+                "open": "first",
+                "high": "max",
+                "low": "min",
+                "close": "last",
+                "volume": "sum"
+            }).dropna()
+            
+            ohlcv = []
+            for dt, row in resampled.iterrows():
+                ohlcv.append({
+                    "time": int(dt.timestamp()),
+                    "open": float(row["open"]),
+                    "high": float(row["high"]),
+                    "low": float(row["low"]),
+                    "close": float(row["close"]),
+                    "volume": float(row["volume"])
+                })
+            return JSONResponse(content=sanitize_data({
+                "model_id": global_eval_data["model_id"],
+                "interval": "1w",
+                "ohlcv": ohlcv
+            }))
+        except Exception as e:
+            logger.error(f"Error resampling weekly ohlcv: {e}")
+            return JSONResponse(content={"model_id": global_eval_data["model_id"], "ohlcv": []})
+
+    elif interval_clean == "1d":
+        import sqlite3
+        from config import Config
+        db_path = Config().outputs_dir / "stock_cache.db"
+        ticker = global_eval_data.get("ticker") or "2330.TW"
+        ohlcv = []
+        if db_path.exists():
+            try:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT datetime, open, high, low, close, volume FROM stock_data WHERE ticker=? AND interval=? ORDER BY datetime ASC",
+                    (ticker, "1d")
+                )
+                rows = cursor.fetchall()
+                for row in rows:
+                    dt = pd.to_datetime(row[0])
+                    ohlcv.append({
+                        "time": int(dt.timestamp()),
+                        "open": float(row[1]),
+                        "high": float(row[2]),
+                        "low": float(row[3]),
+                        "close": float(row[4]),
+                        "volume": float(row[5])
+                    })
+                conn.close()
+            except Exception as e:
+                logger.error(f"Error fetching daily ohlcv from cache: {e}")
+        
+        return JSONResponse(content=sanitize_data({
+            "model_id": global_eval_data["model_id"],
+            "interval": "1d",
+            "ohlcv": ohlcv
+        }))
+
+    # Default to 1h view (raw hourly candlesticks used during evaluation)
+    return JSONResponse(content=sanitize_data({
         "model_id": global_eval_data["model_id"],
+        "interval": "1h",
         "ohlcv": global_eval_data["raw_ohlcv"]
-    })
+    }))
 
 @app.get("/api/metrics")
 async def get_metrics():
     """Fetch standard DQN backtest performance metrics."""
-    return JSONResponse(content={
+    return JSONResponse(content=sanitize_data({
         "model_id": global_eval_data["model_id"],
         "metrics": global_eval_data["metrics"]
-    })
+    }))
 
 @app.get("/api/journal/{pair_id}")
 async def get_journal(pair_id: str):
@@ -339,6 +491,27 @@ async def save_review(pair_id: str, payload: SaveReviewRequest):
         logger.exception("Failed saving trade review")
         raise HTTPException(status_code=500, detail=f"Failed saving review: {str(e)}")
 
+GLOBAL_TRAINING_STATE = {
+    "is_training": False,
+    "ticker": "",
+    "total_episodes": 50,
+    "logs": []
+}
+
+import math
+
+@app.get("/api/training_status")
+def get_training_status():
+    def sanitize(obj):
+        if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+            return None
+        elif isinstance(obj, dict):
+            return {k: sanitize(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [sanitize(v) for v in obj]
+        return obj
+    return sanitize(GLOBAL_TRAINING_STATE)
+
 @app.post("/api/run_pipeline")
 async def run_pipeline(payload: RunPipelineRequest):
     """Run the entire DRL training pipeline end-to-end and register the new model."""
@@ -351,17 +524,49 @@ async def run_pipeline(payload: RunPipelineRequest):
         cfg = Config()
         cfg.ticker = payload.ticker
         cfg.start_date = payload.start_date
-        cfg.end_date = payload.end_date
+        
+        # Yahoo Finance is exclusive on the end date. We add 1 day to make it inclusive.
+        try:
+            end_dt = pd.to_datetime(payload.end_date) + pd.Timedelta(days=1)
+            cfg.end_date = end_dt.strftime('%Y-%m-%d')
+        except Exception:
+            cfg.end_date = payload.end_date
+            
         cfg.strategy_mode = payload.strategy_mode
         cfg.episodes = payload.episodes
         cfg.early_stop_enabled = True
         cfg.early_stop_patience = payload.early_stop_patience
+        
+        if payload.lr is not None: cfg.lr = payload.lr
+        if payload.batch_size is not None: cfg.batch_size = payload.batch_size
+        if payload.gamma is not None: cfg.gamma = payload.gamma
+        if payload.state_lookback is not None: cfg.state_lookback = payload.state_lookback
 
         logger.info(f"Starting DRL Pipeline for {cfg.ticker} from {cfg.start_date} to {cfg.end_date}...")
         
-        # 1. Trigger training (downloads data if needed via the SQLite cache implicitly)
-        ret = run_training_pipeline_v2(cfg)
+        import asyncio
+        GLOBAL_TRAINING_STATE["is_training"] = True
+        GLOBAL_TRAINING_STATE["ticker"] = payload.ticker
+        GLOBAL_TRAINING_STATE["total_episodes"] = payload.episodes
+        GLOBAL_TRAINING_STATE["logs"] = []
+        GLOBAL_TRAINING_STATE["ingestion_logs"] = []
+
+        def training_callback(data):
+            if isinstance(data, dict):
+                if data.get("type") == "epoch_complete" and "log" in data:
+                    GLOBAL_TRAINING_STATE["logs"].append(data["log"])
+                elif data.get("type") == "info" and "message" in data:
+                    GLOBAL_TRAINING_STATE["ingestion_logs"].append(data["message"])
+            elif isinstance(data, str):
+                GLOBAL_TRAINING_STATE["ingestion_logs"].append(data)
+
+        try:
+            # 1. Trigger training asynchronously (downloads data if needed implicitly)
+            ret = await asyncio.to_thread(run_training_pipeline_v2, cfg, training_callback)
+        finally:
+            GLOBAL_TRAINING_STATE["is_training"] = False
         
+
         # 2. Save the trained model
         agent = ret.get("agent")
         feature_mean = ret.get("feature_mean")
@@ -394,8 +599,8 @@ async def run_pipeline(payload: RunPipelineRequest):
             extra={"is_v2": True, "strategy_mode": payload.strategy_mode, "strategy_label": payload.strategy_mode, "manual_save": True},
         )
         
-        # 3. Load the new model into the active dashboard state!
-        run_evaluation_for_model(model_record["model_id"])
+        # 3. Load the new model into the active dashboard state asynchronously!
+        await asyncio.to_thread(run_evaluation_for_model, model_record["model_id"])
         
         return {"status": "success", "model_id": model_record["model_id"]}
     except Exception as e:

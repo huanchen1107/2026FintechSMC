@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 REGISTRY_FILENAME = "model_registry.json"
 MODELS_DIRNAME = "models"
-MAX_MODELS = 2
+MAX_MODELS = 15
 
 
 def _ensure_dirs(outputs_dir: Path) -> tuple[Path, Path]:
@@ -109,7 +109,17 @@ def register_model(
     previous_paths = {item.get("path") for item in items}
     items.append(record)
     items = sorted(items, key=model_score, reverse=True)
-    kept_items = items[:MAX_MODELS]
+    
+    # Freshness guard: ensure newly trained model is kept even if score is currently lower than best models
+    if len(items) > MAX_MODELS:
+        new_in_top = any(item.get("model_id") == model_id for item in items[:MAX_MODELS])
+        if not new_in_top:
+            kept_items = items[:MAX_MODELS - 1] + [record]
+        else:
+            kept_items = items[:MAX_MODELS]
+    else:
+        kept_items = items
+
     kept_paths = {item.get("path") for item in kept_items}
     for old_path in previous_paths - kept_paths:
         if old_path:
