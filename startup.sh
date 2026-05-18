@@ -1,6 +1,39 @@
 #!/bin/bash
 
 # =========================================================
+# Step 0: 從加密檔還原 .env (Restore .env from encrypted file)
+# =========================================================
+if [ ! -f ".env" ]; then
+    echo "🔑 .env 檔案不存在！"
+    ENCRYPTED_FILE=""
+    if [ -f "token.md" ]; then
+        ENCRYPTED_FILE="token.md"
+    elif [ -f "password.md" ]; then
+        ENCRYPTED_FILE="password.md"
+    fi
+
+    if [ -n "$ENCRYPTED_FILE" ]; then
+        echo "📦 偵測到加密檔: $ENCRYPTED_FILE，正在準備還原環境..."
+        read -s -p "請輸入解密密碼 (Hint: ASDF): " PASSWORD
+        echo ""
+        
+        # 進行解密
+        DECRYPT_OUTPUT=$(openssl aes-256-cbc -d -pbkdf2 -iter 100000 -salt -in "$ENCRYPTED_FILE" -out .env -pass pass:"$PASSWORD" 2>&1)
+        if [ $? -eq 0 ]; then
+            echo "✅ 還原成功！.env 檔案已還原。"
+        else
+            echo "❌ 密碼錯誤或解密失敗！"
+            echo "錯誤資訊: $DECRYPT_OUTPUT"
+            rm -f .env 2>/dev/null
+            exit 1
+        fi
+    else
+        echo "⚠️  未找到 .env，且無加密備份檔 (token.md / password.md)。"
+        echo "請手動建立 .env，或建立加密檔以進行自動還原。"
+    fi
+fi
+
+# =========================================================
 # Step 1: 環境檢查 (Environment Check)
 # =========================================================
 echo "=============================="

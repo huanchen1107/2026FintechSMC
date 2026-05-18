@@ -34,16 +34,17 @@ echo "-----------------------------------------"
 echo "📝 Select Model for this Session"
 echo "-----------------------------------------"
 echo "1) DeepSeek Chat (via OpenRouter => Not free)"
-echo "2) DeepSeek V4 Flash (Free) [Default]"
+echo "2) DeepSeek V4 Flash (Free)"
 echo "3) Llama 3.3 70B (Free)"
 echo "4) Qwen3 Coder (Free)"
 echo "5) Trinity Large Thinking (Free + 🧠 Thinking)"
-echo "6) Skip (Use Proxy Default)"
+echo "6) Gemini Dynamic Router (Flash/Pro/Thinking) [Default & Recommended]"
+echo "7) Skip (Use Proxy Default)"
 echo "-----------------------------------------"
-printf "Select model option [1-6, Default: 2]: "
+printf "Select model option [1-7, Default: 6]: "
 IFS= read -r model_choice
 model_choice=$(printf '%s' "$model_choice" | tr -dc '0-9')
-model_choice=${model_choice:-2}
+model_choice=${model_choice:-6}
 
 case $model_choice in
     1) MODEL_ID="anthropic/open_router/deepseek/deepseek-chat";    THINKING=false ;;
@@ -51,6 +52,7 @@ case $model_choice in
     3) MODEL_ID="anthropic/open_router/meta-llama/llama-3.3-70b-instruct:free"; THINKING=false ;;
     4) MODEL_ID="anthropic/open_router/qwen/qwen3-coder:free";     THINKING=false ;;
     5) MODEL_ID="anthropic/open_router/arcee-ai/trinity-large-thinking:free"; THINKING=true ;;
+    6) MODEL_ID="anthropic/open_router/gemini-dynamic-router";      THINKING=false ;;
     *) MODEL_ID=""; THINKING=false ;;
 esac
 
