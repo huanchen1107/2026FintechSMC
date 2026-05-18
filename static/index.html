@@ -80,120 +80,123 @@
             </div>
         </section>
 
-        <!-- MAIN CONTENT: CHART & LIST -->
-        <div class="main-grid">
-            <!-- LEFT: CHART CONTAINER -->
-            <main class="chart-container glass-card">
-                <div class="chart-header" style="display: flex; justify-content: space-between; align-items: flex-start;">
-                    <div>
-                        <h2><i class="fa-solid fa-chart-candlestick"></i> Interday Candlestick Feed (1H)</h2>
-                        <span class="chart-subtitle">Green Arrow = Buy Entry | Red Arrow = Sell Exit</span>
+        <!-- ORIGINAL 3:1 LAYOUT GRID -->
+        <div class="original-grid">
+            <!-- LEFT COLUMN (3fr): Chart & AI Coach -->
+            <div class="col-left">
+                <!-- CHART CONTAINER -->
+                <main class="chart-container glass-card">
+                    <div class="chart-header" style="display: flex; justify-content: space-between; align-items: flex-start;">
+                        <div>
+                            <h2><i class="fa-solid fa-chart-candlestick"></i> Interday Candlestick Feed (1H)</h2>
+                            <span class="chart-subtitle">Green Arrow = Buy Entry | Red Arrow = Sell Exit</span>
+                        </div>
+                        <button id="fullscreen-chart-btn" class="theme-btn" title="Toggle Fullscreen Chart" style="width: 32px; height: 32px; font-size: 14px;">
+                            <i class="fa-solid fa-expand"></i>
+                        </button>
                     </div>
-                    <button id="fullscreen-chart-btn" class="theme-btn" title="Toggle Fullscreen Chart" style="width: 32px; height: 32px; font-size: 14px;">
-                        <i class="fa-solid fa-expand"></i>
-                    </button>
-                </div>
-                <div id="chart-viewport"></div>
-            </main>
+                    <div id="chart-viewport"></div>
+                </main>
 
-            <!-- RIGHT: COMPLETED POSITIONS LIST -->
-            <aside class="positions-container glass-card">
-                <div class="sidebar-header">
-                    <h2><i class="fa-solid fa-list-check"></i> Position Journals</h2>
-                    <span class="sidebar-subtitle">Select a position to audit & ask AI coach</span>
-                </div>
-                <div class="positions-list" id="positions-list">
-                    <div class="list-placeholder">No active model loaded yet...</div>
-                </div>
-            </aside>
-        </div>
+                <!-- INTERACTIVE AI COACH -->
+                <div class="coach-col glass-card">
+                    <div class="coach-header">
+                        <div class="coach-avatar">
+                            <i class="fa-solid fa-user-ninja"></i>
+                        </div>
+                        <div class="coach-title">
+                            <h2>🤖 AI Quant Coach</h2>
+                            <span>Interactive Deep Q-Learning Rationale Auditor</span>
+                        </div>
+                    </div>
+                    
+                    <div class="chat-viewport" id="chat-viewport">
+                        <div class="chat-welcome">
+                            <i class="fa-solid fa-comments"></i>
+                            <p>Select a trade position from the list on the right and ask questions, or record your trade thoughts here! The AI Quant Coach will dissect the SMC indicator states and model predictions directly.</p>
+                        </div>
+                    </div>
 
-        <!-- DETAILS & DISCUSSION AREA -->
-        <div class="bottom-grid">
-            <!-- LEFT COLUMN: TRADE PARAMETERS & AUDIT -->
-            <div class="parameters-col">
-                <div class="parameters-card glass-card">
-                    <h2><i class="fa-solid fa-sliders"></i> Position Parameters</h2>
-                    <div class="params-list">
-                        <div class="param-row">
-                            <span class="param-label"><i class="fa-solid fa-arrow-trend-up"></i> Buy Price</span>
-                            <span class="param-value" id="param-buy-price">-- TWD</span>
-                        </div>
-                        <div class="param-row">
-                            <span class="param-label"><i class="fa-solid fa-arrow-trend-down"></i> Sell Price</span>
-                            <span class="param-value" id="param-sell-price">-- TWD</span>
-                        </div>
-                        <div class="param-row">
-                            <span class="param-label"><i class="fa-solid fa-shield-halved"></i> Stop Price (SL)</span>
-                            <span class="param-value stop" id="param-sl">-- TWD</span>
-                        </div>
-                        <div class="param-row">
-                            <span class="param-label"><i class="fa-solid fa-bullseye"></i> Target Price (TP)</span>
-                            <span class="param-value profit" id="param-tp">-- TWD</span>
-                        </div>
-                        <div class="param-row">
-                            <span class="param-label"><i class="fa-solid fa-layer-group"></i> R:R Basis</span>
-                            <span class="param-value" id="param-rr-basis">--</span>
-                        </div>
+                    <div class="chat-input-area">
+                        <textarea id="chat-input" placeholder="Ask AI: e.g. Why did the agent open a buy position at this liquidity sweep?..." disabled></textarea>
+                        <button id="chat-send-btn" disabled><i class="fa-solid fa-paper-plane"></i></button>
                     </div>
-                    <div class="rationales">
-                        <div class="rationale-box">
-                            <strong>Buy Reason:</strong>
-                            <p id="rationale-buy">No position selected.</p>
-                        </div>
-                        <div class="rationale-box">
-                            <strong>Sell Reason:</strong>
-                            <p id="rationale-sell">No position selected.</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="audit-card glass-card">
-                    <h2><i class="fa-solid fa-clipboard-check"></i> Audit Review</h2>
-                    <div class="audit-options">
-                        <label class="radio-container">
-                            <input type="radio" name="audit-state" value="Correct" checked>
-                            <span class="radio-checkmark correct"></span>
-                            Correct
-                        </label>
-                        <label class="radio-container">
-                            <input type="radio" name="audit-state" value="Wrong">
-                            <span class="radio-checkmark wrong"></span>
-                            Wrong
-                        </label>
-                        <label class="radio-container">
-                            <input type="radio" name="audit-state" value="Unclear">
-                            <span class="radio-checkmark unclear"></span>
-                            Unclear
-                        </label>
-                    </div>
-                    <textarea id="audit-note" placeholder="Write custom notes or audit remarks for this transaction..."></textarea>
-                    <button class="action-btn" id="save-review-btn"><i class="fa-solid fa-floppy-disk"></i> Save Review</button>
                 </div>
             </div>
 
-            <!-- RIGHT COLUMN: INTERACTIVE AI COACH -->
-            <div class="coach-col glass-card">
-                <div class="coach-header">
-                    <div class="coach-avatar">
-                        <i class="fa-solid fa-user-ninja"></i>
+            <!-- RIGHT COLUMN (1fr): Positions, Parameters, Audit -->
+            <div class="col-right">
+                <!-- COMPLETED POSITIONS LIST -->
+                <aside class="positions-container glass-card">
+                    <div class="sidebar-header">
+                        <h2><i class="fa-solid fa-list-check"></i> Position Journals</h2>
+                        <span class="sidebar-subtitle">Select a position to audit & ask AI coach</span>
                     </div>
-                    <div class="coach-title">
-                        <h2>🤖 AI Quant Coach</h2>
-                        <span>Interactive Deep Q-Learning Rationale Auditor</span>
+                    <div class="positions-list" id="positions-list">
+                        <div class="list-placeholder">No active model loaded yet...</div>
                     </div>
-                </div>
-                
-                <div class="chat-viewport" id="chat-viewport">
-                    <div class="chat-welcome">
-                        <i class="fa-solid fa-comments"></i>
-                        <p>Select a trade position from the list above and ask questions, or record your trade thoughts here! The AI Quant Coach will dissect the SMC indicator states and model predictions directly.</p>
-                    </div>
-                </div>
+                </aside>
 
-                <div class="chat-input-area">
-                    <textarea id="chat-input" placeholder="Ask AI: e.g. Why did the agent open a buy position at this liquidity sweep?..." disabled></textarea>
-                    <button id="chat-send-btn" disabled><i class="fa-solid fa-paper-plane"></i></button>
+                <!-- TRADE PARAMETERS & AUDIT -->
+                <div class="parameters-col">
+                    <div class="parameters-card glass-card">
+                        <h2><i class="fa-solid fa-sliders"></i> Position Parameters</h2>
+                        <div class="params-list">
+                            <div class="param-row">
+                                <span class="param-label"><i class="fa-solid fa-arrow-trend-up"></i> Buy Price</span>
+                                <span class="param-value" id="param-buy-price">-- TWD</span>
+                            </div>
+                            <div class="param-row">
+                                <span class="param-label"><i class="fa-solid fa-arrow-trend-down"></i> Sell Price</span>
+                                <span class="param-value" id="param-sell-price">-- TWD</span>
+                            </div>
+                            <div class="param-row">
+                                <span class="param-label"><i class="fa-solid fa-shield-halved"></i> Stop Price (SL)</span>
+                                <span class="param-value stop" id="param-sl">-- TWD</span>
+                            </div>
+                            <div class="param-row">
+                                <span class="param-label"><i class="fa-solid fa-bullseye"></i> Target Price (TP)</span>
+                                <span class="param-value profit" id="param-tp">-- TWD</span>
+                            </div>
+                            <div class="param-row">
+                                <span class="param-label"><i class="fa-solid fa-layer-group"></i> R:R Basis</span>
+                                <span class="param-value" id="param-rr-basis">--</span>
+                            </div>
+                        </div>
+                        <div class="rationales">
+                            <div class="rationale-box">
+                                <strong>Buy Reason:</strong>
+                                <p id="rationale-buy">No position selected.</p>
+                            </div>
+                            <div class="rationale-box">
+                                <strong>Sell Reason:</strong>
+                                <p id="rationale-sell">No position selected.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="audit-card glass-card">
+                        <h2><i class="fa-solid fa-clipboard-check"></i> Audit Review</h2>
+                        <div class="audit-options">
+                            <label class="radio-container">
+                                <input type="radio" name="audit-state" value="Correct" checked>
+                                <span class="radio-checkmark correct"></span>
+                                Correct
+                            </label>
+                            <label class="radio-container">
+                                <input type="radio" name="audit-state" value="Wrong">
+                                <span class="radio-checkmark wrong"></span>
+                                Wrong
+                            </label>
+                            <label class="radio-container">
+                                <input type="radio" name="audit-state" value="Unclear">
+                                <span class="radio-checkmark unclear"></span>
+                                Unclear
+                            </label>
+                        </div>
+                        <textarea id="audit-note" placeholder="Write custom notes or audit remarks for this transaction..."></textarea>
+                        <button class="action-btn" id="save-review-btn"><i class="fa-solid fa-floppy-disk"></i> Save Review</button>
+                    </div>
                 </div>
             </div>
         </div>

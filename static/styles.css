@@ -290,12 +290,19 @@ body {
     margin-top: 2px;
 }
 
-/* MAIN LAYOUT GRID */
-.main-grid {
+/* ORIGINAL 3:1 LAYOUT GRID */
+.original-grid {
     display: grid;
-    grid-template-columns: 2fr 1fr;
+    grid-template-columns: 3fr 1.2fr;
     gap: 24px;
-    min-height: 520px;
+    min-height: 700px;
+}
+
+.col-left, .col-right {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    min-width: 0;
 }
 
 /* CHART CONTAINER */
@@ -453,13 +460,7 @@ body {
 .pos-badge.profit { background: rgba(16, 185, 129, 0.15); color: var(--neon-green); border: 1px solid rgba(16, 185, 129, 0.25); }
 .pos-badge.loss { background: rgba(239, 68, 68, 0.15); color: var(--neon-red); border: 1px solid rgba(239, 68, 68, 0.25); }
 
-/* BOTTOM GRID: DETAILS & COACH */
-.bottom-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 24px;
-    min-height: 480px;
-}
+/* BOTTOM GRID DEPRECATED FOR 3:1 LAYOUT */
 
 .parameters-col {
     display: flex;
@@ -661,7 +662,8 @@ body {
     flex-direction: column;
     gap: 16px;
     padding: 16px 4px;
-    max-height: 280px;
+    min-height: 350px;
+    max-height: 600px;
 }
 
 .chat-welcome {
