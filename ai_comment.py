@@ -203,6 +203,8 @@ def generate_journal_ai_reply(pair_info: dict, user_comment: str, history: list)
 我們正在審查一筆強化學習 DQN 智能體在回測中完成的交易對 (Trade Pair)。
 
 ## 交易對基本資訊
+- Agent model ID: {pair_info.get('model_id', 'N/A')}
+- Position pair ID: {pair_info.get('pair_id', 'N/A')}
 - Ticker: {pair_info.get('ticker')}
 - 進場時間：{pair_info.get('buy_time')} / 價格：{pair_info.get('buy_price')}
 - 出場時間：{pair_info.get('sell_time')} / 價格：{pair_info.get('sell_price')}

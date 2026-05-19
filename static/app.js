@@ -8,6 +8,8 @@ let selectedPairId = null;
 let chartInstance = null;
 let candlestickSeries = null;
 let currentChartInterval = "1h";
+let rrPoints = [];
+let rrOverlay = null;
 
 // DOM Elements
 const modelSelector = document.getElementById("model-selector");
@@ -35,6 +37,7 @@ const auditNote = document.getElementById("audit-note");
 const chatViewport = document.getElementById("chat-viewport");
 const chatInput = document.getElementById("chat-input");
 const chatSendBtn = document.getElementById("chat-send-btn");
+const journalPairSelector = document.getElementById("journal-pair-selector");
 
 // Toast Notification
 function showToast(message, isError = false) {
@@ -46,10 +49,38 @@ function showToast(message, isError = false) {
     }, 4000);
 }
 
+function resetSelectedTradeContext() {
+    selectedPairId = null;
+    document.querySelectorAll(".position-card").forEach(el => el.classList.remove("active"));
+    paramBuyPrice.innerText = "-- TWD";
+    paramSellPrice.innerText = "-- TWD";
+    paramSL.innerText = "-- TWD";
+    paramTP.innerText = "-- TWD";
+    paramRRBasis.innerText = "--";
+    rationaleBuy.innerText = "No position selected.";
+    rationaleSell.innerText = "No position selected.";
+    if (auditNote) auditNote.value = "";
+    if (journalPairSelector) {
+        journalPairSelector.innerHTML = `<option value="">Select a model position...</option>`;
+        journalPairSelector.disabled = true;
+    }
+    chatInput.disabled = true;
+    chatSendBtn.disabled = true;
+    chatInput.value = "";
+    chatInput.placeholder = "Select a trade position first...";
+    chatViewport.innerHTML = `
+        <div class="chat-welcome">
+            <i class="fa-solid fa-comments"></i>
+            <p>Select a position from this saved model to load its pair-specific discussion.</p>
+        </div>
+    `;
+}
+
 // 1. Initialize Price Chart using TradingView's Lightweight Charts
 function initChart() {
     const chartElement = document.getElementById("chart-viewport");
     chartElement.innerHTML = ""; // Clear placeholder
+    chartElement.style.position = "relative";
     
     chartInstance = LightweightCharts.createChart(chartElement, {
         layout: {
@@ -102,8 +133,78 @@ function initChart() {
         if (entries.length === 0 || !chartInstance) return;
         const { width, height } = entries[0].contentRect;
         chartInstance.resize(width, height);
+        renderRRThresholdLines();
     });
     resizeObserver.observe(chartElement);
+
+    if (chartInstance.timeScale && typeof chartInstance.timeScale().subscribeVisibleTimeRangeChange === "function") {
+        chartInstance.timeScale().subscribeVisibleTimeRangeChange(() => renderRRThresholdLines());
+    }
+}
+
+function getRRThreshold() {
+    const input = document.getElementById("pipe-rr-threshold");
+    const value = input ? parseFloat(input.value) : 2.0;
+    return Number.isFinite(value) ? value : 2.0;
+}
+
+function calculatePairRR(pair) {
+    const entry = Number(pair.buy_price);
+    const stop = Number(pair.rr_stop_loss_price);
+    const target = Number(pair.rr_take_profit_price);
+    const risk = entry - stop;
+    const reward = target - entry;
+    if (!Number.isFinite(entry) || !Number.isFinite(stop) || !Number.isFinite(target) || risk <= 0 || reward <= 0) {
+        return null;
+    }
+    return reward / risk;
+}
+
+function ensureRROverlay() {
+    const chartElement = document.getElementById("chart-viewport");
+    if (!chartElement) return null;
+    if (!rrOverlay) {
+        rrOverlay = document.createElement("div");
+        rrOverlay.id = "rr-threshold-overlay";
+        rrOverlay.style.cssText = "position:absolute; inset:0; pointer-events:none; z-index:5; overflow:hidden;";
+        chartElement.appendChild(rrOverlay);
+    }
+    return rrOverlay;
+}
+
+function clearRRGuideLines() {
+    if (rrOverlay) rrOverlay.innerHTML = "";
+}
+
+function renderRRThresholdLines() {
+    const overlay = ensureRROverlay();
+    if (!overlay || !chartInstance || !chartInstance.timeScale) return;
+    overlay.innerHTML = "";
+
+    const threshold = getRRThreshold();
+    const timeScale = chartInstance.timeScale();
+    const visibleRange = typeof timeScale.getVisibleRange === "function" ? timeScale.getVisibleRange() : null;
+    const chartHeight = overlay.clientHeight || document.getElementById("chart-viewport").clientHeight;
+
+    rrPoints
+        .filter(point => Number(point.rr_valid) === 1 && Number(point.rr_ratio) >= threshold)
+        .forEach(point => {
+            if (visibleRange && (point.time < visibleRange.from || point.time > visibleRange.to)) return;
+            const x = timeScale.timeToCoordinate(point.time);
+            if (x === null || x === undefined || !Number.isFinite(x)) return;
+
+            const line = document.createElement("div");
+            line.title = `RR ${Number(point.rr_ratio).toFixed(2)} >= ${threshold.toFixed(1)}`;
+            line.style.cssText = [
+                "position:absolute",
+                `left:${Math.round(x)}px`,
+                "top:0",
+                `height:${chartHeight}px`,
+                "border-left:1px dotted rgba(0, 200, 83, 0.7)",
+                "box-shadow:0 0 8px rgba(0, 200, 83, 0.25)",
+            ].join(";");
+            overlay.appendChild(line);
+        });
 }
 
 // 2. Load Model Registry
@@ -140,6 +241,8 @@ async function loadModels() {
 // 3. Load Active Model Dashboard Data
 async function loadDashboardData() {
     try {
+        resetSelectedTradeContext();
+
         // A. Load Metrics
         const metricsResp = await fetch("/api/metrics");
         const metricsData = await metricsResp.json();
@@ -155,15 +258,18 @@ async function loadDashboardData() {
         const chartResp = await fetch(`/api/chart_data?interval=${currentChartInterval}`);
         const chartJson = await chartResp.json();
         chartData = chartJson.ohlcv || [];
+        rrPoints = chartJson.rr_points || [];
         if (candlestickSeries && chartData.length > 0) {
             candlestickSeries.setData(chartData);
             chartInstance.timeScale().fitContent();
+            renderRRThresholdLines();
         }
 
         // C. Load Trade Positions
         const pairsResp = await fetch("/api/trade_pairs");
         const pairsJson = await pairsResp.json();
         tradePairs = pairsJson.pairs || [];
+        activeModelId = pairsJson.model_id || activeModelId;
         
         renderPositionsList();
         renderAllChartMarkers();
@@ -181,6 +287,10 @@ async function loadDashboardData() {
 // 4. Render Sidebar Position Cards
 function renderPositionsList() {
     positionsList.innerHTML = "";
+    if (journalPairSelector) {
+        journalPairSelector.innerHTML = `<option value="">Select a model position...</option>`;
+        journalPairSelector.disabled = tradePairs.length === 0;
+    }
     if (tradePairs.length === 0) {
         positionsList.innerHTML = `<div class="list-placeholder">No completed trade positions for this agent run.</div>`;
         return;
@@ -193,6 +303,14 @@ function renderPositionsList() {
         
         const buyDate = new Date(p.buy_time).toLocaleDateString();
         const sellDate = new Date(p.sell_time).toLocaleDateString();
+        const pairLabel = `Position #${p.pair_id} | ${p.ticker} | ${buyDate} -> ${sellDate} | ${pctText}`;
+
+        if (journalPairSelector) {
+            const opt = document.createElement("option");
+            opt.value = p.pair_id;
+            opt.textContent = pairLabel;
+            journalPairSelector.appendChild(opt);
+        }
 
         const card = document.createElement("div");
         card.className = "position-card";
@@ -203,7 +321,7 @@ function renderPositionsList() {
             <div class="pos-left">
                 <span class="pos-id">POSITION #${p.pair_id}</span>
                 <span class="pos-ticker">${p.ticker}</span>
-                <span class="pos-dates">${buyDate} → ${sellDate}</span>
+                <span class="pos-dates">${buyDate} -> ${sellDate}</span>
             </div>
             <div class="pos-right">
                 <span class="pos-pnl ${isProfit ? 'profit' : 'loss'}">${pnlText}</span>
@@ -216,7 +334,15 @@ function renderPositionsList() {
 
 // 5. Place Buy/Sell Entry Markers for All Completed Positions on the Chart
 function renderAllChartMarkers() {
-    if (!candlestickSeries || tradePairs.length === 0) return;
+    if (!candlestickSeries) return;
+    if (tradePairs.length === 0) {
+        if (typeof candlestickSeries.setMarkers === 'function') {
+            candlestickSeries.setMarkers([]);
+        } else if (typeof LightweightCharts.createSeriesMarkers === 'function') {
+            LightweightCharts.createSeriesMarkers(candlestickSeries, []);
+        }
+        return;
+    }
 
     const markers = [];
     tradePairs.forEach(p => {
@@ -259,17 +385,25 @@ function selectTradePosition(pairId) {
     // Toggle active CSS class
     document.querySelectorAll(".position-card").forEach(el => el.classList.remove("active"));
     const activeCard = document.getElementById(`pos-card-${pairId}`);
-    if (activeCard) activeCard.classList.add("active");
+    if (activeCard) {
+        activeCard.classList.add("active");
+        activeCard.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+    if (journalPairSelector && String(journalPairSelector.value) !== String(pairId)) {
+        journalPairSelector.value = String(pairId);
+    }
 
     const pair = tradePairs.find(p => p.pair_id === pairId);
     if (!pair) return;
+    const modelLabel = activeModelId ? activeModelId : "active model";
 
     // A. Populate Parameters Card
     paramBuyPrice.innerText = `${pair.buy_price.toLocaleString()} TWD`;
     paramSellPrice.innerText = `${pair.sell_price.toLocaleString()} TWD`;
     paramSL.innerText = pair.rr_stop_loss_price ? `${pair.rr_stop_loss_price.toLocaleString()} TWD` : "N/A";
     paramTP.innerText = pair.rr_take_profit_price ? `${pair.rr_take_profit_price.toLocaleString()} TWD` : "N/A";
-    paramRRBasis.innerText = pair.rr_basis || "N/A";
+    const selectedRR = calculatePairRR(pair);
+    paramRRBasis.innerText = selectedRR !== null ? `RR ${selectedRR.toFixed(2)}x | ${pair.rr_basis || "N/A"}` : (pair.rr_basis || "N/A");
     rationaleBuy.innerText = pair.buy_reason || "No buy logic recorded.";
     rationaleSell.innerText = pair.sell_reason || "No sell logic recorded.";
 
@@ -279,7 +413,7 @@ function selectTradePosition(pairId) {
     // C. Enable & Load AI Coach chat
     chatInput.disabled = false;
     chatSendBtn.disabled = false;
-    chatInput.placeholder = "Ask AI: e.g. Why did the agent buy at this liquidity sweep?...";
+    chatInput.placeholder = `Ask about Position #${pairId} in ${modelLabel.substring(0, 24)}...`;
     
     loadJournalChatThread(pairId);
 }
@@ -304,15 +438,17 @@ function focusChartOnPosition(buyTimeStr, sellTimeStr) {
 async function loadJournalChatThread(pairId) {
     chatViewport.innerHTML = `<div class="list-placeholder"><i class="fa-solid fa-spinner fa-spin"></i> Loading AI discussion...</div>`;
     try {
-        const resp = await fetch(`/api/journal/${pairId}`);
+        const modelQuery = activeModelId ? `?model_id=${encodeURIComponent(activeModelId)}` : "";
+        const resp = await fetch(`/api/journal/${pairId}${modelQuery}`);
         const thread = await resp.json();
+        const pair = tradePairs.find(p => p.pair_id === pairId);
         
         chatViewport.innerHTML = "";
         if (thread.length === 0) {
             chatViewport.innerHTML = `
                 <div class="chat-welcome">
                     <i class="fa-solid fa-comments"></i>
-                    <p>Begin auditing! Ask your AI Quant Coach about the parameters of Position #${pairId}.</p>
+                    <p>Begin auditing Position #${pairId}${pair ? ` (${pair.ticker})` : ""} under model ${activeModelId || "active model"}.</p>
                 </div>
             `;
             return;
@@ -370,7 +506,7 @@ async function sendChatMessage() {
         const resp = await fetch(`/api/journal/${selectedPairId}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ user_comment: text })
+            body: JSON.stringify({ user_comment: text, model_id: activeModelId })
         });
         
         // Remove loading bubble
@@ -415,6 +551,7 @@ async function saveAuditReview() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 pair_id: selectedPairId,
+                model_id: activeModelId,
                 review_state: stateVal,
                 review_note: noteVal
             })
@@ -460,6 +597,15 @@ modelSelector.addEventListener("change", async (e) => {
         showToast("Network error switching model", true);
     }
 });
+
+if (journalPairSelector) {
+    journalPairSelector.addEventListener("change", (e) => {
+        const pairId = Number(e.target.value);
+        if (Number.isFinite(pairId) && pairId > 0) {
+            selectTradePosition(pairId);
+        }
+    });
+}
 
 chatSendBtn.addEventListener("click", sendChatMessage);
 chatInput.addEventListener("keydown", (e) => {
@@ -514,6 +660,13 @@ if (advancedToggle && advancedPanel) {
 }
 
 const runPipelineBtn = document.getElementById("run-pipeline-btn");
+const rrThresholdInput = document.getElementById("pipe-rr-threshold");
+if (rrThresholdInput) {
+    rrThresholdInput.addEventListener("input", () => {
+        renderRRThresholdLines();
+    });
+}
+
 if (runPipelineBtn) {
     runPipelineBtn.addEventListener("click", async () => {
         const ticker = document.getElementById("pipe-ticker").value;
@@ -522,6 +675,7 @@ if (runPipelineBtn) {
         const strategy = document.getElementById("pipe-strategy").value;
         const episodes = parseInt(document.getElementById("pipe-episodes").value);
         const patience = parseInt(document.getElementById("pipe-patience").value);
+        const rrThreshold = parseFloat(document.getElementById("pipe-rr-threshold").value);
 
         if (!ticker || !start || !end) {
             showToast("Please fill out all pipeline parameters.", true);
@@ -548,7 +702,8 @@ if (runPipelineBtn) {
                 end_date: end,
                 strategy_mode: strategy,
                 episodes: episodes,
-                early_stop_patience: patience
+                early_stop_patience: patience,
+                training_rr_threshold: Number.isFinite(rrThreshold) ? rrThreshold : 2.0
             };
             
             if (isAdvanced) {
@@ -624,6 +779,7 @@ function switchTab(target) {
     
     // Hide all main sections first
     if(originalGrid) originalGrid.style.display = "none";
+    if(originalGrid) originalGrid.classList.remove("review-mode");
     if(pageStep0) pageStep0.style.display = "none";
     if(pageStep1) pageStep1.style.display = "none";
     if(appHeader) appHeader.style.display = "none";
@@ -640,8 +796,10 @@ function switchTab(target) {
         colLeft.style.display = "";
         colRight.style.display = "";
         chartContainer.style.display = "";
+        chartContainer.style.height = "";
         positionsContainer.style.display = "";
         coachCol.style.display = "none";
+        coachCol.style.height = "";
         parametersCol.style.display = "none";
         if(chartInstance) setTimeout(() => { chartInstance.resize(chartContainer.clientWidth, chartContainer.clientHeight); chartInstance.timeScale().fitContent(); }, 100);
     } else if (target === "step3") {
@@ -651,16 +809,35 @@ function switchTab(target) {
         colLeft.style.display = "block";
         colRight.style.display = "none";
         chartContainer.style.display = "none";
+        chartContainer.style.height = "";
         coachCol.style.display = "flex";
         coachCol.style.height = "80vh"; 
     } else if (target === "step4") {
         if(appHeader) appHeader.style.display = "flex";
         if(metricsRow) metricsRow.style.display = "grid";
-        if(originalGrid) originalGrid.style.display = "block";
-        colLeft.style.display = "none";
+        if(originalGrid) originalGrid.style.display = "";
+        if(originalGrid) originalGrid.classList.add("review-mode");
+        colLeft.style.display = "block";
         colRight.style.display = "block";
-        positionsContainer.style.display = "none";
+        chartContainer.style.display = "flex";
+        chartContainer.style.height = "46vh";
+        coachCol.style.display = "flex";
+        coachCol.style.height = "38vh";
+        positionsContainer.style.display = "";
         parametersCol.style.display = "flex";
+        if (selectedPairId === null && tradePairs.length > 0) {
+            selectTradePosition(tradePairs[0].pair_id);
+        }
+        if(chartInstance) {
+            setTimeout(() => {
+                chartInstance.resize(chartContainer.clientWidth, chartContainer.clientHeight);
+                renderRRThresholdLines();
+                if (selectedPairId !== null) {
+                    const pair = tradePairs.find(p => p.pair_id === selectedPairId);
+                    if (pair) focusChartOnPosition(pair.buy_time, pair.sell_time);
+                }
+            }, 100);
+        }
     }
 }
 
@@ -755,9 +932,11 @@ async function refreshChartOnly() {
         const chartResp = await fetch(`/api/chart_data?interval=${currentChartInterval}`);
         const chartJson = await chartResp.json();
         chartData = chartJson.ohlcv || [];
+        rrPoints = chartJson.rr_points || [];
         if (candlestickSeries && chartData.length > 0) {
             candlestickSeries.setData(chartData);
             chartInstance.timeScale().fitContent();
+            renderRRThresholdLines();
         }
         
         // Re-render chart markers (arrows) on the new candles!

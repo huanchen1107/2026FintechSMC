@@ -41,6 +41,7 @@ global_eval_data = {
     "pairs": [],
     "metrics": {},
     "raw_ohlcv": [],
+    "rr_points": [],
 }
 
 class SelectModelRequest(BaseModel):
@@ -50,9 +51,11 @@ class SaveReviewRequest(BaseModel):
     pair_id: int
     review_state: str
     review_note: str
+    model_id: Optional[str] = None
 
 class SubmitJournalRequest(BaseModel):
     user_comment: str
+    model_id: Optional[str] = None
 
 class RunPipelineRequest(BaseModel):
     ticker: str
@@ -61,6 +64,7 @@ class RunPipelineRequest(BaseModel):
     strategy_mode: str
     episodes: int
     early_stop_patience: int
+    training_rr_threshold: Optional[float] = None
     lr: Optional[float] = None
     batch_size: Optional[int] = None
     gamma: Optional[float] = None
@@ -88,6 +92,10 @@ def serialize_trade_pair(pair) -> dict:
         "buy_reason": str(pair.buy_reason),
         "sell_reason": str(pair.sell_reason),
     }
+
+def journal_key_for(pair_id: str, model_id: Optional[str] = None) -> str:
+    scoped_model_id = model_id or global_eval_data.get("model_id") or "unknown_model"
+    return f"{scoped_model_id}::pair::{pair_id}"
 
 def run_evaluation_for_model(model_id: str) -> bool:
     """Helper to run the V2 evaluation pipeline on a specific model."""
@@ -153,6 +161,58 @@ def run_evaluation_for_model(model_id: str) -> bool:
         else:
             logger.warning("raw_market_data_2330_TW.csv not found, candlestick loading skipped.")
             global_eval_data["raw_ohlcv"] = []
+
+        rr_points = []
+        mtf_df = eval_ret.get("mtf_df")
+        if mtf_df is not None and not mtf_df.empty:
+            rr_time_col = next((c for c in ["timestamp", "datetime", "date", "time"] if c in mtf_df.columns), None)
+            rr_col = "h1_rr_ratio" if "h1_rr_ratio" in mtf_df.columns else ("rr_ratio" if "rr_ratio" in mtf_df.columns else None)
+            rr_valid_col = "h1_rr_valid" if "h1_rr_valid" in mtf_df.columns else ("rr_valid" if "rr_valid" in mtf_df.columns else None)
+            if rr_time_col and rr_col:
+                rr_view = mtf_df[[c for c in [rr_time_col, rr_col, rr_valid_col] if c]].copy()
+                rr_view[rr_time_col] = pd.to_datetime(rr_view[rr_time_col], errors="coerce")
+                rr_view[rr_col] = pd.to_numeric(rr_view[rr_col], errors="coerce")
+                if rr_valid_col:
+                    rr_view[rr_valid_col] = pd.to_numeric(rr_view[rr_valid_col], errors="coerce").fillna(0).astype(int)
+                rr_view = rr_view.dropna(subset=[rr_time_col, rr_col])
+                for _, row in rr_view.iterrows():
+                    rr_points.append({
+                        "time": int(row[rr_time_col].timestamp()),
+                        "rr_ratio": float(row[rr_col]),
+                        "rr_valid": int(row[rr_valid_col]) if rr_valid_col else 1,
+                    })
+        if not rr_points:
+            pd_arrays_path = outputs_dir / "step1_pd_arrays.csv"
+            if pd_arrays_path.exists():
+                try:
+                    rr_df = pd.read_csv(pd_arrays_path, usecols=lambda c: c in {
+                        "timestamp",
+                        "datetime",
+                        "date",
+                        "time",
+                        "h1_rr_ratio",
+                        "rr_ratio",
+                        "h1_rr_valid",
+                        "rr_valid",
+                    })
+                    rr_time_col = next((c for c in ["timestamp", "datetime", "date", "time"] if c in rr_df.columns), None)
+                    rr_col = "h1_rr_ratio" if "h1_rr_ratio" in rr_df.columns else ("rr_ratio" if "rr_ratio" in rr_df.columns else None)
+                    rr_valid_col = "h1_rr_valid" if "h1_rr_valid" in rr_df.columns else ("rr_valid" if "rr_valid" in rr_df.columns else None)
+                    if rr_time_col and rr_col:
+                        rr_df[rr_time_col] = pd.to_datetime(rr_df[rr_time_col], errors="coerce")
+                        rr_df[rr_col] = pd.to_numeric(rr_df[rr_col], errors="coerce")
+                        if rr_valid_col:
+                            rr_df[rr_valid_col] = pd.to_numeric(rr_df[rr_valid_col], errors="coerce").fillna(0).astype(int)
+                        rr_df = rr_df.dropna(subset=[rr_time_col, rr_col])
+                        for _, row in rr_df.iterrows():
+                            rr_points.append({
+                                "time": int(row[rr_time_col].timestamp()),
+                                "rr_ratio": float(row[rr_col]),
+                                "rr_valid": int(row[rr_valid_col]) if rr_valid_col else 1,
+                            })
+                except Exception as e:
+                    logger.warning(f"Failed loading RR points from step1_pd_arrays.csv: {e}")
+        global_eval_data["rr_points"] = sorted(rr_points, key=lambda x: x["time"])
 
         global_eval_data["model_id"] = model_id
         global_eval_data["ticker"] = selected_meta.get("ticker", "2330.TW")
@@ -240,7 +300,8 @@ async def get_chart_data(interval: str = "1h"):
             return JSONResponse(content=sanitize_data({
                 "model_id": global_eval_data["model_id"],
                 "interval": "4h",
-                "ohlcv": ohlcv
+                "ohlcv": ohlcv,
+                "rr_points": global_eval_data.get("rr_points", []),
             }))
         except Exception as e:
             logger.error(f"Error resampling 4h ohlcv: {e}")
@@ -303,7 +364,8 @@ async def get_chart_data(interval: str = "1h"):
             return JSONResponse(content=sanitize_data({
                 "model_id": global_eval_data["model_id"],
                 "interval": "1w",
-                "ohlcv": ohlcv
+                "ohlcv": ohlcv,
+                "rr_points": global_eval_data.get("rr_points", []),
             }))
         except Exception as e:
             logger.error(f"Error resampling weekly ohlcv: {e}")
@@ -341,14 +403,16 @@ async def get_chart_data(interval: str = "1h"):
         return JSONResponse(content=sanitize_data({
             "model_id": global_eval_data["model_id"],
             "interval": "1d",
-            "ohlcv": ohlcv
+            "ohlcv": ohlcv,
+            "rr_points": global_eval_data.get("rr_points", []),
         }))
 
     # Default to 1h view (raw hourly candlesticks used during evaluation)
     return JSONResponse(content=sanitize_data({
         "model_id": global_eval_data["model_id"],
         "interval": "1h",
-        "ohlcv": global_eval_data["raw_ohlcv"]
+        "ohlcv": global_eval_data["raw_ohlcv"],
+        "rr_points": global_eval_data.get("rr_points", []),
     }))
 
 @app.get("/api/metrics")
@@ -360,15 +424,15 @@ async def get_metrics():
     }))
 
 @app.get("/api/journal/{pair_id}")
-async def get_journal(pair_id: str):
-    """Fetch full discussion thread chat logs for a specific position pair."""
+async def get_journal(pair_id: str, model_id: Optional[str] = None):
+    """Fetch model-scoped discussion logs for a specific evaluated position pair."""
     cfg = Config()
     journal_path = cfg.outputs_dir / "trade_journal.json"
     if not journal_path.exists():
         return JSONResponse(content=[])
     try:
         db = json.loads(journal_path.read_text(encoding="utf-8"))
-        thread = db.get(pair_id, [])
+        thread = db.get(journal_key_for(pair_id, model_id), [])
         return JSONResponse(content=thread)
     except Exception as e:
         logger.error(f"Error loading trade journal: {e}")
@@ -376,9 +440,12 @@ async def get_journal(pair_id: str):
 
 @app.post("/api/journal/{pair_id}")
 async def submit_journal(pair_id: str, payload: SubmitJournalRequest):
-    """Append a user trade question, generate Gemini feedback, and return updated logs."""
+    """Append a model-scoped trade question, generate Gemini feedback, and return updated logs."""
     cfg = Config()
     journal_path = cfg.outputs_dir / "trade_journal.json"
+    active_model_id = str(global_eval_data.get("model_id") or "")
+    if payload.model_id and payload.model_id != active_model_id:
+        raise HTTPException(status_code=409, detail="Selected model is no longer the active evaluated model.")
     
     # 1. Find corresponding trade pair info
     pair_info = None
@@ -389,6 +456,7 @@ async def submit_journal(pair_id: str, payload: SubmitJournalRequest):
             
     if not pair_info:
         raise HTTPException(status_code=404, detail="Trade pair not found in active backtest.")
+    journal_key = journal_key_for(pair_id, active_model_id)
 
     # 2. Load existing log thread
     db = {}
@@ -398,7 +466,7 @@ async def submit_journal(pair_id: str, payload: SubmitJournalRequest):
         except Exception:
             db = {}
             
-    thread = db.setdefault(pair_id, [])
+    thread = db.setdefault(journal_key, [])
     
     # 3. Append user message
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -413,6 +481,8 @@ async def submit_journal(pair_id: str, payload: SubmitJournalRequest):
     try:
         # Format mapping parameters
         coach_pair_info = {
+            "model_id": active_model_id,
+            "pair_id": pair_info.get("pair_id"),
             "ticker": pair_info.get("ticker", "2330.TW"),
             "buy_time": pair_info.get("buy_time"),
             "sell_time": pair_info.get("sell_time"),
@@ -440,7 +510,7 @@ async def submit_journal(pair_id: str, payload: SubmitJournalRequest):
     thread.append(ai_msg)
     
     # 5. Save thread to database
-    db[pair_id] = thread
+    db[journal_key] = thread
     journal_path.write_text(json.dumps(db, indent=2, ensure_ascii=False), encoding="utf-8")
     
     return JSONResponse(content=thread)
@@ -463,6 +533,7 @@ async def save_review(pair_id: str, payload: SaveReviewRequest):
             raise HTTPException(status_code=404, detail="Trade pair not found in active backtest.")
 
         review_item = {
+            "model_id": str(global_eval_data.get("model_id") or payload.model_id or ""),
             "pair_id": int(pair_info["pair_id"]),
             "ticker": str(pair_info["ticker"]),
             "buy_trade_id": str(pair_info["buy_trade_id"]),
@@ -536,6 +607,8 @@ async def run_pipeline(payload: RunPipelineRequest):
         cfg.episodes = payload.episodes
         cfg.early_stop_enabled = True
         cfg.early_stop_patience = payload.early_stop_patience
+        if payload.training_rr_threshold is not None:
+            cfg.training_rr_threshold = payload.training_rr_threshold
         
         if payload.lr is not None: cfg.lr = payload.lr
         if payload.batch_size is not None: cfg.batch_size = payload.batch_size

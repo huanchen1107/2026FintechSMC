@@ -348,6 +348,18 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.02);
 }
 
+.original-grid.review-mode #chart-viewport {
+    min-height: 260px;
+}
+
+.original-grid.review-mode .positions-container {
+    max-height: 46vh;
+}
+
+.original-grid.review-mode .coach-col {
+    min-height: 320px;
+}
+
 /* POSITIONS LIST (SIDEBAR) */
 .positions-container {
     padding: 24px;
@@ -620,6 +632,8 @@ body {
     padding: 24px;
     display: flex;
     flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
 }
 
 .coach-header {
@@ -628,6 +642,7 @@ body {
     gap: 16px;
     padding-bottom: 16px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    flex-wrap: wrap;
 }
 
 .coach-avatar {
@@ -655,15 +670,54 @@ body {
     color: var(--text-secondary);
 }
 
+.coach-pair-selector {
+    margin-left: auto;
+    min-width: 280px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.coach-pair-selector label {
+    font-size: 10px;
+    color: var(--text-secondary);
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+}
+
+.coach-pair-selector select {
+    width: 100%;
+    min-height: 38px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    padding: 8px 12px;
+    font-family: var(--font-body);
+    font-size: 12px;
+    outline: none;
+}
+
+.coach-pair-selector select:focus {
+    border-color: var(--neon-purple);
+    box-shadow: 0 0 10px rgba(139, 92, 246, 0.2);
+}
+
+.coach-pair-selector select:disabled {
+    color: var(--text-muted);
+    cursor: not-allowed;
+}
+
 .chat-viewport {
-    flex-grow: 1;
+    flex: 1 1 auto;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 16px;
     padding: 16px 4px;
-    min-height: 350px;
-    max-height: 600px;
+    min-height: 0;
+    max-height: none;
 }
 
 .chat-welcome {
@@ -698,6 +752,10 @@ body {
     font-size: 13px;
     line-height: 1.5;
     position: relative;
+}
+
+.msg-content {
+    overflow-wrap: anywhere;
 }
 
 .chat-msg.user {

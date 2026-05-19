@@ -134,6 +134,12 @@
 <h2>🤖 AI Quant Coach</h2>
 <span>Interactive Deep Q-Learning Rationale Auditor</span>
 </div>
+<div class="coach-pair-selector">
+<label for="journal-pair-selector">Trading Pair for Discussion</label>
+<select disabled="" id="journal-pair-selector">
+<option value="">Select a model position...</option>
+</select>
+</div>
 </div>
 <div class="chat-viewport" id="chat-viewport">
 <div class="chat-welcome">
@@ -263,6 +269,12 @@
 <div class="form-group">
 <label>Early Stop Patience</label>
 <input id="pipe-patience" max="100" min="5" type="number" value="25"/>
+</div>
+</div>
+<div class="form-row">
+<div class="form-group">
+<label>Replay Buffer RR &gt; N</label>
+<input id="pipe-rr-threshold" max="10" min="0.5" step="0.1" type="number" value="2.0"/>
 </div>
 </div>
 <!-- ADVANCED SETTINGS TOGGLE -->
